@@ -140,6 +140,12 @@ function LoginPageInner() {
                 </Button>
               )}
 
+              {authModes?.google && !authModes?.local && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-snug text-amber-950">
+                  Usuario/contraseña internos: falta <code className="font-mono text-[11px]">AUTH_LOCAL_USERS</code> en Vercel (Production) o el JSON es inválido. Un solo renglón; hashes con <code className="font-mono">$</code> sin <code className="font-mono">\</code>.
+                </p>
+              )}
+
               {authModes?.google && authModes?.local && (
                 <div className="relative">
                   <div className="absolute inset-0 flex items-center">
