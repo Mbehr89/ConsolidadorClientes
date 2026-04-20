@@ -1,5 +1,8 @@
 ﻿import type { NextAuthOptions } from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
+import bcrypt from 'bcryptjs';
+import { parseLocalAuthUsers, isLocalAuthConfigured } from '@/lib/auth/local-users';
 
 function normalizeEmail(v: string | null | undefined): string {
   return (v ?? '').trim().toLowerCase();
@@ -20,26 +23,61 @@ function isAllowedDomain(email: string, domainRaw: string | undefined): boolean 
   return email.endsWith(`@${domain}`);
 }
 
-const authDisabled = !process.env.GOOGLE_CLIENT_ID;
+const hasGoogleAuth = Boolean(process.env.GOOGLE_CLIENT_ID?.trim());
 const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
 
+const providers: NextAuthOptions['providers'] = [];
+
+if (hasGoogleAuth) {
+  providers.push(
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      authorization: {
+        params: {
+          scope:
+            'openid email profile https://www.googleapis.com/auth/drive.readonly',
+          prompt: 'consent',
+          access_type: 'offline',
+        },
+      },
+    })
+  );
+}
+
+if (isLocalAuthConfigured()) {
+  providers.push(
+    CredentialsProvider({
+      name: 'credentials',
+      credentials: {
+        username: { label: 'Usuario', type: 'text' },
+        password: { label: 'Contraseña', type: 'password' },
+      },
+      async authorize(credentials) {
+        const username = credentials?.username?.trim();
+        const password = credentials?.password ?? '';
+        if (!username || !password) return null;
+
+        const users = parseLocalAuthUsers(process.env.AUTH_LOCAL_USERS);
+        const row = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+        if (!row) return null;
+
+        const ok = await bcrypt.compare(password, row.passwordHash);
+        if (!ok) return null;
+
+        return {
+          id: row.username,
+          name: row.username,
+          email: `${row.username}@local.auth`,
+          isAdmin: row.admin,
+        };
+      },
+    })
+  );
+}
+
 export const authOptions: NextAuthOptions = {
-  providers: authDisabled
-    ? []
-    : [
-        GoogleProvider({
-          clientId: process.env.GOOGLE_CLIENT_ID ?? '',
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
-          authorization: {
-            params: {
-              scope:
-                'openid email profile https://www.googleapis.com/auth/drive.readonly',
-              prompt: 'consent',
-              access_type: 'offline',
-            },
-          },
-        }),
-      ],
+  providers,
   session: {
     strategy: 'jwt',
   },
@@ -58,24 +96,43 @@ export const authOptions: NextAuthOptions = {
     },
   },
   callbacks: {
-    async signIn({ user }) {
-      if (authDisabled) return true;
+    async signIn({ user, account }) {
+      if (account?.provider === 'credentials') {
+        return true;
+      }
+      if (!hasGoogleAuth) {
+        return true;
+      }
       const email = normalizeEmail(user.email);
       if (!email) return false;
       const ok = isAllowedDomain(email, process.env.ALLOWED_EMAIL_DOMAIN);
       if (!ok) return '/login?error=domain_not_allowed';
       return true;
     },
-    async jwt({ token, account }) {
+    async jwt({ token, user, account }) {
+      if (account?.provider === 'credentials' && user) {
+        const u = user as { isAdmin?: boolean; email?: string | null; id?: string };
+        token.isAdmin = Boolean(u.isAdmin);
+        token.email = u.email ?? undefined;
+        token.sub = u.id ?? token.sub;
+        token.authProvider = 'credentials';
+        return token;
+      }
+
       if (account?.provider === 'google') {
         token.googleAccessToken = account.access_token;
         token.googleRefreshToken = account.refresh_token ?? token.googleRefreshToken;
         token.googleAccessTokenExpires = account.expires_at
           ? account.expires_at * 1000
           : null;
+        token.authProvider = 'google';
       }
+
       const email = normalizeEmail(token.email);
-      token.isAdmin = email ? adminEmails.has(email) : false;
+      if (token.authProvider !== 'credentials') {
+        token.isAdmin = email ? adminEmails.has(email) : false;
+      }
+
       return token;
     },
     async session({ session, token }) {

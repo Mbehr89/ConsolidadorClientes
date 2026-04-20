@@ -39,7 +39,11 @@ const ADMIN_ITEMS = [
 ] as const;
 
 function authBypassedInDev() {
-  return process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  return (
+    process.env.NODE_ENV === 'development' &&
+    !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID &&
+    process.env.NEXT_PUBLIC_HAS_LOCAL_AUTH !== '1'
+  );
 }
 
 function formatTodayEs(): string {

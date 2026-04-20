@@ -1,11 +1,14 @@
 ﻿import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+import { isLocalAuthConfigured } from '@/lib/auth/local-users';
 
 const PUBLIC_PATHS = ['/login', '/favicon.ico'];
 
 export async function middleware(req: NextRequest) {
-  if (!process.env.GOOGLE_CLIENT_ID) {
+  const hasGoogleAuth = Boolean(process.env.GOOGLE_CLIENT_ID?.trim());
+  const hasLocalAuth = isLocalAuthConfigured();
+  if (!hasGoogleAuth && !hasLocalAuth) {
     return NextResponse.next();
   }
 

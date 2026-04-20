@@ -3,7 +3,11 @@
 import { useSession } from 'next-auth/react';
 
 function authBypassedInDev() {
-  return process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  return (
+    process.env.NODE_ENV === 'development' &&
+    !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID &&
+    process.env.NEXT_PUBLIC_HAS_LOCAL_AUTH !== '1'
+  );
 }
 
 export function AdminOnly({ children }: { children: React.ReactNode }) {

@@ -5,11 +5,16 @@ declare module 'next-auth' {
     isAdmin: boolean;
     hasDriveAccess?: boolean;
   }
+
+  interface User {
+    isAdmin?: boolean;
+  }
 }
 
 declare module 'next-auth/jwt' {
   interface JWT {
     isAdmin?: boolean;
+    authProvider?: 'google' | 'credentials';
     googleAccessToken?: string | null;
     googleRefreshToken?: string | null;
     googleAccessTokenExpires?: number | null;

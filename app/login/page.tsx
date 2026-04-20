@@ -1,13 +1,17 @@
 ﻿'use client';
 
-import { Suspense, useEffect } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 function authBypassedInDev() {
-  return process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  return (
+    process.env.NODE_ENV === 'development' &&
+    !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID &&
+    process.env.NEXT_PUBLIC_HAS_LOCAL_AUTH !== '1'
+  );
 }
 
 function normalizeOAuthError(raw: string | null): string | null {
@@ -27,6 +31,9 @@ function getErrorMessage(error: string | null): string | null {
   }
   if (error === 'OAuthSignin' || error === 'OAuthCallback') {
     return 'Fallo el callback de Google. Revisá en Google Cloud Console la URI de redireccion: /api/auth/callback/google para tu dominio.';
+  }
+  if (error === 'CredentialsSignin') {
+    return 'Usuario o contraseña incorrectos.';
   }
   return `No se pudo iniciar sesion (codigo: ${error}). Intenta nuevamente o revisá logs en Vercel.`;
 }
@@ -59,6 +66,19 @@ function LoginPageInner() {
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
   const error = getErrorMessage(normalizeOAuthError(searchParams.get('error')));
 
+  const [authModes, setAuthModes] = useState<{ google: boolean; local: boolean } | null>(null);
+  const [localUser, setLocalUser] = useState('');
+  const [localPass, setLocalPass] = useState('');
+  const [localLoading, setLocalLoading] = useState(false);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetch('/api/auth/config', { cache: 'no-store' })
+      .then((r) => r.json() as Promise<{ google: boolean; local: boolean }>)
+      .then(setAuthModes)
+      .catch(() => setAuthModes({ google: false, local: false }));
+  }, []);
+
   useEffect(() => {
     if (authBypassedInDev()) {
       router.replace('/dashboard');
@@ -69,24 +89,115 @@ function LoginPageInner() {
     }
   }, [status, router, callbackUrl]);
 
+  const onLocalSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setCredentialError(null);
+      setLocalLoading(true);
+      try {
+        const res = await signIn('credentials', {
+          username: localUser.trim(),
+          password: localPass,
+          callbackUrl,
+          redirect: false,
+        });
+        if (res?.error) {
+          setCredentialError('Usuario o contraseña incorrectos.');
+          return;
+        }
+        if (res?.url) router.replace(res.url);
+        else router.replace(callbackUrl);
+      } finally {
+        setLocalLoading(false);
+      }
+    },
+    [callbackUrl, localPass, localUser, router]
+  );
+
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-muted/30">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl">Consolidador de Tenencias</CardTitle>
-          <CardDescription>Ingresa con tu cuenta corporativa para acceder al panel.</CardDescription>
+          <CardDescription>
+            {authModes?.google
+              ? 'Ingresa con tu cuenta corporativa o usuario interno.'
+              : authModes?.local
+                ? 'Ingresa con usuario y contraseña.'
+                : 'Cargando opciones de acceso...'}
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           {authBypassedInDev() ? (
             <p className="text-sm text-muted-foreground">
-              OAuth desactivado en desarrollo local (GOOGLE_CLIENT_ID vacio).
+              OAuth desactivado en desarrollo local (sin GOOGLE_CLIENT_ID ni AUTH_LOCAL_USERS).
             </p>
           ) : (
-            <Button className="w-full" onClick={() => void signIn('google', { callbackUrl })}>
-              Ingresar con Google
-            </Button>
+            <>
+              {authModes?.google && (
+                <Button className="w-full" onClick={() => void signIn('google', { callbackUrl })}>
+                  Ingresar con Google
+                </Button>
+              )}
+
+              {authModes?.google && authModes?.local && (
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-card px-2 text-muted-foreground">o</span>
+                  </div>
+                </div>
+              )}
+
+              {authModes?.local && (
+                <form onSubmit={onLocalSubmit} className="space-y-3">
+                  <div>
+                    <label htmlFor="local-user" className="mb-1 block text-sm font-medium">
+                      Usuario
+                    </label>
+                    <input
+                      id="local-user"
+                      name="username"
+                      autoComplete="username"
+                      value={localUser}
+                      onChange={(e) => setLocalUser(e.target.value)}
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="local-pass" className="mb-1 block text-sm font-medium">
+                      Contraseña
+                    </label>
+                    <input
+                      id="local-pass"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      value={localPass}
+                      onChange={(e) => setLocalPass(e.target.value)}
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      required
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={localLoading}>
+                    {localLoading ? 'Ingresando…' : 'Ingresar'}
+                  </Button>
+                </form>
+              )}
+
+              {authModes && !authModes.google && !authModes.local && (
+                <p className="text-sm text-destructive">
+                  No hay metodos de autenticacion configurados (GOOGLE_CLIENT_ID o AUTH_LOCAL_USERS).
+                </p>
+              )}
+            </>
           )}
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {(error || credentialError) && (
+            <p className="text-sm text-destructive">{error ?? credentialError}</p>
+          )}
         </CardContent>
       </Card>
     </main>

@@ -47,6 +47,8 @@ const nextConfig = {
   poweredByHeader: false,
   env: {
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ?? '',
+    /** Solo indica si hay login local configurado (no expone usuarios ni hashes). */
+    NEXT_PUBLIC_HAS_LOCAL_AUTH: process.env.AUTH_LOCAL_USERS?.trim() ? '1' : '',
   },
   /**
    * En Windows la caché persistente de Webpack en disco falla a menudo (ENOENT *.pack.gz).
