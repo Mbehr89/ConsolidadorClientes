@@ -18,4 +18,13 @@ describe('parseLocalAuthUsers', () => {
     expect(parseLocalAuthUsers('')).toEqual([]);
     expect(parseLocalAuthUsers('not json')).toEqual([]);
   });
+
+  it('accepts backslash-dollar hashes copied from .env.local (invalid JSON → fixed)', () => {
+    const hash = '$2a$10$abcdefghijklmnopqrstuv';
+    const escaped = hash.replace(/\$/g, '\\$');
+    const raw = `[{"username":"u","passwordHash":"${escaped}","admin":false}]`;
+    const out = parseLocalAuthUsers(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.passwordHash).toBe(hash);
+  });
 });
