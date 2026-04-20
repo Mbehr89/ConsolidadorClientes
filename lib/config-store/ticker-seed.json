@@ -1,0 +1,762 @@
+{
+  "EWZ": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "EWZ",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "QQQ": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "QQQ",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "SPY": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "SPY",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "IWM": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "IWM",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TLT": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "TLT",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "VNQ": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "VNQ",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "XLF": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "XLF",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "SLV": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "SLV",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "INDA": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "INDA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "EWJ": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "EWJ",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TQQQ": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "TQQQ",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "ETHA": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "ETHA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "IBIT": {
+    "pais": "US",
+    "clase": "etf",
+    "es_etf": true,
+    "nombre": "IBIT",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "BBAR": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "BBAR",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "BMA": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "BMA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "BYMA": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "BYMA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "PAMP": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "PAMP",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TGSU2": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "TGSU2",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "YPFD": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "YPFD",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "ALUA": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "ALUA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "CRES": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "CRES",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TXAR": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "TXAR",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "SUPV": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "SUPV",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "COME": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "COME",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "HARG": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "HARG",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "IRSA": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "IRSA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "MOLA": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "MOLA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TGNO4": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "TGNO4",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "CEPU": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "CEPU",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "BHIP": {
+    "pais": "AR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "BHIP",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "AAPL": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "AAPL",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "AMZN": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "AMZN",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GOOGL": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "GOOGL",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "META": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "META",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "MSFT": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "MSFT",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "NVDA": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "NVDA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TSLA": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "TSLA",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "NFLX": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "NFLX",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "ABNB": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "ABNB",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "CRWD": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "CRWD",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "LLY": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "LLY",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "COP": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "COP",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "CVX": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "CVX",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "CHRD": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "CHRD",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "CNMD": {
+    "pais": "US",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "CNMD",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "ASML": {
+    "pais": "NL",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "ASML",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "ABEV": {
+    "pais": "BR",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "ABEV",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "NU": {
+    "pais": "KY",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "NU",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GLOB": {
+    "pais": "LU",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "GLOB",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "MELI": {
+    "pais": "UY",
+    "clase": "equity",
+    "es_etf": false,
+    "nombre": "MELI",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GGAL": {
+    "pais": "AR",
+    "clase": "cedear",
+    "es_etf": false,
+    "nombre": "GGAL",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "YPF": {
+    "pais": "AR",
+    "clase": "cedear",
+    "es_etf": false,
+    "nombre": "YPF",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "PAM": {
+    "pais": "AR",
+    "clase": "cedear",
+    "es_etf": false,
+    "nombre": "PAM",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "VIST": {
+    "pais": "MX",
+    "clase": "cedear",
+    "es_etf": false,
+    "nombre": "VIST",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "AL30": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "AL30",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GD35": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "GD35",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GD30": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "GD30",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "AE38": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "AE38",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "AL29": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "AL29",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "AL41": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "AL41",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GD29": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "GD29",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GD38": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "GD38",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "GD41": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "GD41",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "BPOC7": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "BPOC7",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "BPOD7": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "BPOD7",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "NDT25": {
+    "pais": "AR",
+    "clase": "bond",
+    "es_etf": false,
+    "nombre": "NDT25",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "YMCXO": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "YMCXO",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "PN35O": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "PN35O",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "PN36O": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "PN36O",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "MGCMO": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "MGCMO",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "PLC5O": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "PLC5O",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "TSC4O": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "TSC4O",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "YM39O": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "YM39O",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "VSCOO": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "VSCOO",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "VSCVO": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "VSCVO",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  },
+  "YM34O": {
+    "pais": "AR",
+    "clase": "on",
+    "es_etf": false,
+    "nombre": "YM34O",
+    "confirmado": true,
+    "fuente": "seed",
+    "confirmado_por": null,
+    "fecha": "2026-01-01T00:00:00.000Z"
+  }
+}

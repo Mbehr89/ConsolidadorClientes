@@ -1,0 +1,323 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — wealth management / institucional (Altoo-style) */
+@layer base {
+  :root {
+    /* === BACKGROUNDS === */
+    --color-bg-page: #f4f6f9;
+    --color-bg-surface: #eef3f8;
+    --color-bg-card: #ffffff;
+    --color-bg-overlay: rgba(27, 59, 90, 0.05);
+
+    /* === NAVY === */
+    --color-navy-900: #0f2338;
+    --color-navy-700: #1b3b5a;
+    --color-navy-500: #2b5278;
+    --color-navy-300: #6ca7d4;
+    --color-navy-100: #c8dcf0;
+    --color-navy-050: #eef3f8;
+
+    /* === TEAL (positivo) === */
+    --color-teal-600: #1a7a55;
+    --color-teal-400: #2ea87e;
+    --color-teal-100: #e6f3ee;
+
+    /* === SEMÁNTICOS === */
+    --color-red-400: #e05353;
+    --color-red-100: #fdecea;
+    --color-amber-400: #f4a623;
+    --color-amber-100: #fff4e0;
+
+    /* === TEXTO === */
+    --color-text-primary: #1b3b5a;
+    --color-text-secondary: #8494a7;
+    --color-text-disabled: #b8c5d1;
+    --color-text-inverse: #ffffff;
+
+    /* === BORDES === */
+    --color-border-subtle: #d8e2ed;
+    --color-border-medium: #b8c8dc;
+    --color-border-strong: #8494a7;
+
+    /* Brokers (legibilidad sobre fondo claro) */
+    --color-ms: var(--color-navy-300);
+    --color-netx360: var(--color-teal-400);
+    --color-ieb: var(--color-amber-400);
+    --color-gma: var(--color-navy-500);
+
+    /* Espaciado base 4px — referencia */
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+
+    --shadow-card: 0 1px 3px rgba(27, 59, 90, 0.06), 0 1px 2px rgba(27, 59, 90, 0.04);
+    --shadow-panel: 0 4px 12px rgba(27, 59, 90, 0.08);
+    --transition-fast: 120ms ease;
+    --transition-base: 200ms ease;
+
+    /* shadcn / Tailwind — mapeo a tokens (sin gradientes; fondo página #F4F6F9) */
+    --background: 220 33% 96%;
+    --foreground: 209 54% 23%;
+    --card: 0 0% 100%;
+    --card-foreground: 209 54% 23%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 209 54% 23%;
+    --primary: 209 54% 23%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 95%;
+    --secondary-foreground: 209 54% 23%;
+    --muted: 210 40% 95%;
+    --muted-foreground: 213 14% 58%;
+    --accent: 210 35% 92%;
+    --accent-foreground: 209 54% 23%;
+    --destructive: 0 71% 59%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213 32% 89%;
+    --input: 213 26% 80%;
+    --ring: 208 45% 32%;
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --color-bg-page: #0f1e2e;
+    --color-bg-surface: #162333;
+    --color-bg-card: #1b2d3e;
+    --color-bg-overlay: rgba(255, 255, 255, 0.03);
+    --color-text-primary: #e8eff6;
+    --color-text-secondary: #7a8fa3;
+    --color-text-disabled: #3d5268;
+    --color-border-subtle: #243447;
+    --color-border-medium: #2e4460;
+
+    --background: 210 50% 12%;
+    --foreground: 210 40% 93%;
+    --card: 210 35% 17%;
+    --card-foreground: 210 40% 93%;
+    --popover: 210 35% 17%;
+    --popover-foreground: 210 40% 93%;
+    --primary: 209 54% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 30% 20%;
+    --secondary-foreground: 210 40% 93%;
+    --muted: 210 30% 20%;
+    --muted-foreground: 213 14% 65%;
+    --accent: 210 28% 22%;
+    --accent-foreground: 210 40% 93%;
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 25% 28%;
+    --input: 210 25% 30%;
+    --ring: 209 54% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    min-height: 100vh;
+  }
+
+  table thead th {
+    @apply text-[11px] uppercase tracking-wide font-medium;
+    color: var(--color-text-secondary);
+  }
+
+  table tbody td {
+    @apply text-[13px] text-foreground;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  table tbody tr:hover {
+    background: var(--color-bg-overlay);
+  }
+}
+
+@layer components {
+  .text-display {
+    font-size: 32px;
+    font-weight: 500;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+    color: var(--color-text-primary);
+  }
+
+  .text-kpi {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-primary);
+  }
+
+  .text-h2 {
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.2px;
+    color: var(--color-text-primary);
+  }
+
+  .text-h3 {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+  }
+
+  .text-body {
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.6;
+    color: var(--color-text-primary);
+  }
+
+  .text-label {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--color-text-secondary);
+  }
+
+  .text-caption {
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
+
+  .text-number {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+    letter-spacing: 0;
+  }
+
+  .page-shell {
+    @apply space-y-6 max-w-7xl;
+  }
+
+  .page-header {
+    @apply flex flex-wrap items-start justify-between gap-4;
+  }
+
+  .page-title {
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.2px;
+    color: var(--color-text-primary);
+    @apply tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply mt-1 text-sm;
+    color: var(--color-text-secondary);
+  }
+
+  .data-table-wrap {
+    @apply overflow-auto rounded-lg border-[0.5px] border-border bg-card shadow-card;
+  }
+
+  .kpi-grid {
+    @apply grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6;
+  }
+
+  .kpi-card {
+    @apply rounded-lg border-[0.5px] border-border bg-card px-5 py-4 shadow-card min-w-0;
+  }
+
+  .kpi-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
+
+  .kpi-value {
+    margin-top: 4px;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-primary);
+  }
+
+  .progress-track {
+    @apply h-1 rounded-full mt-1;
+    background: var(--color-border-subtle);
+  }
+
+  .progress-fill {
+    @apply h-1 rounded-full;
+  }
+
+  .badge-compact {
+    @apply text-[11px] px-2.5 py-0.5 rounded-[20px] font-medium;
+  }
+
+  .broker-ms {
+    color: var(--color-navy-700);
+    border-color: color-mix(in srgb, var(--color-ms) 45%, var(--color-border-medium));
+    background-color: color-mix(in srgb, var(--color-ms) 14%, #ffffff);
+  }
+
+  .broker-netx360 {
+    color: var(--color-teal-600);
+    border-color: color-mix(in srgb, var(--color-netx360) 40%, var(--color-border-medium));
+    background-color: var(--color-teal-100);
+  }
+
+  .broker-ieb {
+    color: #9a6800;
+    border-color: color-mix(in srgb, var(--color-ieb) 45%, var(--color-border-medium));
+    background-color: var(--color-amber-100);
+  }
+
+  .broker-gma {
+    color: var(--color-navy-700);
+    border-color: color-mix(in srgb, var(--color-gma) 40%, var(--color-border-medium));
+    background-color: var(--color-navy-100);
+  }
+
+  .titular-persona {
+    background: var(--color-navy-050);
+    color: var(--color-text-primary);
+  }
+
+  .titular-juridica {
+    background: var(--color-navy-100);
+    color: var(--color-text-primary);
+  }
+
+  /* Grid de contenido (12 cols) */
+  .content-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .col-3 {
+    grid-column: span 3 / span 3;
+  }
+  .col-4 {
+    grid-column: span 4 / span 4;
+  }
+  .col-6 {
+    grid-column: span 6 / span 6;
+  }
+  .col-8 {
+    grid-column: span 8 / span 8;
+  }
+  .col-12 {
+    grid-column: span 12 / span 12;
+  }
+}
