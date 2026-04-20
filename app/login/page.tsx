@@ -48,10 +48,10 @@ export default function LoginPage() {
 
 function LoginFallback() {
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 bg-muted/30">
+    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-6 pt-[max(1rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Consolidador de Tenencias</CardTitle>
+          <CardTitle className="text-xl sm:text-2xl">Consolidador de Tenencias</CardTitle>
           <CardDescription>Cargando...</CardDescription>
         </CardHeader>
       </Card>
@@ -115,10 +115,10 @@ function LoginPageInner() {
   );
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 bg-muted/30">
+    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-6 pt-[max(1rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Consolidador de Tenencias</CardTitle>
+          <CardTitle className="text-xl sm:text-2xl">Consolidador de Tenencias</CardTitle>
           <CardDescription>
             {authModes?.google
               ? 'Ingresa con tu cuenta corporativa o usuario interno.'
@@ -135,7 +135,7 @@ function LoginPageInner() {
           ) : (
             <>
               {authModes?.google && (
-                <Button className="w-full" onClick={() => void signIn('google', { callbackUrl })}>
+                <Button className="h-11 w-full touch-manipulation sm:h-10" onClick={() => void signIn('google', { callbackUrl })}>
                   Ingresar con Google
                 </Button>
               )}
@@ -163,7 +163,7 @@ function LoginPageInner() {
                       autoComplete="username"
                       value={localUser}
                       onChange={(e) => setLocalUser(e.target.value)}
-                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      className="h-11 w-full rounded-md border bg-background px-3 text-base sm:h-10 sm:text-sm"
                       required
                     />
                   </div>
@@ -178,11 +178,11 @@ function LoginPageInner() {
                       autoComplete="current-password"
                       value={localPass}
                       onChange={(e) => setLocalPass(e.target.value)}
-                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      className="h-11 w-full rounded-md border bg-background px-3 text-base sm:h-10 sm:text-sm"
                       required
                     />
                   </div>
-                  <Button type="submit" className="w-full" disabled={localLoading}>
+                  <Button type="submit" className="h-11 w-full touch-manipulation sm:h-10" disabled={localLoading}>
                     {localLoading ? 'Ingresando…' : 'Ingresar'}
                   </Button>
                 </form>

@@ -13,9 +13,11 @@ import {
   Grid3X3,
   Link2,
   LogOut,
+  Menu,
   Settings2,
   Upload,
   Users,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -55,11 +57,21 @@ function formatTodayEs(): string {
   }).format(new Date());
 }
 
+function formatTodayShortEs(): string {
+  return new Intl.DateTimeFormat('es', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date());
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [glosarioPending, setGlosarioPending] = useState<number | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const todayLabel = useMemo(() => formatTodayEs(), []);
+  const todayShort = useMemo(() => formatTodayShortEs(), []);
 
   const isAdmin = useMemo(() => {
     if (authBypassedInDev()) return true;
@@ -87,9 +99,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     };
   }, [isAdmin]);
 
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileNavOpen]);
+
   const navLinkClass = (active: boolean) =>
     cn(
-      'flex items-center gap-3 rounded-md px-3 py-2 text-[13px] font-normal transition-colors duration-[120ms]',
+      'flex min-h-[44px] items-center gap-3 rounded-md px-3 py-2 text-[13px] font-normal transition-colors duration-[120ms] lg:min-h-0 lg:py-2',
       active
         ? 'bg-white/[0.12] text-white font-medium'
         : 'text-white/[0.65] hover:bg-white/[0.08] hover:text-white/[0.92]'
@@ -97,9 +122,34 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <aside className="flex w-60 shrink-0 flex-col bg-navy-700 py-6 px-5 text-white">
-        <div className="flex h-12 items-center">
+      {mobileNavOpen && (
+        <button
+          type="button"
+          aria-label="Cerrar menu"
+          className="fixed inset-0 z-40 bg-black/45 backdrop-blur-[1px] lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
+      <aside
+        className={cn(
+          'flex w-[min(18rem,88vw)] shrink-0 flex-col bg-navy-700 px-5 py-6 pl-[max(1.25rem,env(safe-area-inset-left,0px))] text-white transition-transform duration-200 ease-out',
+          'fixed inset-y-0 left-0 z-50 lg:relative lg:z-0 lg:w-60 lg:translate-x-0',
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        )}
+      >
+        <div className="flex h-12 items-center justify-between gap-2">
           <h1 className="text-base font-semibold tracking-tight text-white">Consolidador</h1>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 touch-manipulation text-white hover:bg-white/10 lg:hidden"
+            aria-label="Cerrar menu"
+            onClick={() => setMobileNavOpen(false)}
+          >
+            <X className="h-5 w-5" />
+          </Button>
         </div>
         <p className="text-[11px] text-white/45">Portfolio intelligence</p>
 
@@ -184,18 +234,39 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="flex h-[60px] shrink-0 items-center justify-between border-b-[0.5px] border-border bg-background px-6 md:px-10">
-          <div>
-            <p className="text-caption">Workspace</p>
-            <p className="text-sm font-medium text-foreground">Consolidado de tenencias</p>
+        <header className="flex h-[56px] shrink-0 items-center gap-2 border-b-[0.5px] border-border bg-background px-3 sm:h-[60px] sm:px-5 lg:px-10 pt-[max(0.25rem,env(safe-area-inset-top,0px))]">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 touch-manipulation lg:hidden"
+            aria-label="Abrir menu"
+            onClick={() => setMobileNavOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-caption">Workspace</p>
+              <p className="truncate text-sm font-medium text-foreground">Consolidado de tenencias</p>
+            </div>
+            <time
+              className="hidden shrink-0 text-label capitalize text-muted-foreground lg:block"
+              dateTime={new Date().toISOString().slice(0, 10)}
+            >
+              {todayLabel}
+            </time>
+            <time
+              className="max-w-[42%] shrink-0 text-right text-[11px] leading-tight text-muted-foreground lg:hidden"
+              dateTime={new Date().toISOString().slice(0, 10)}
+            >
+              {todayShort}
+            </time>
           </div>
-          <time className="text-label capitalize text-muted-foreground" dateTime={new Date().toISOString().slice(0, 10)}>
-            {todayLabel}
-          </time>
         </header>
 
-        <main className="flex-1 overflow-auto">
-          <div className="p-6 md:p-8 md:px-10">{children}</div>
+        <main className="flex-1 overflow-auto overflow-x-hidden">
+          <div className="p-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:p-6 lg:p-8 lg:px-10">{children}</div>
         </main>
       </div>
     </div>
