@@ -10,12 +10,25 @@ function authBypassedInDev() {
   return process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 }
 
+function normalizeOAuthError(raw: string | null): string | null {
+  if (raw == null) return null;
+  const v = raw.trim();
+  if (!v || v === 'undefined' || v === 'null') return null;
+  return v;
+}
+
 function getErrorMessage(error: string | null): string | null {
   if (!error) return null;
   if (error === 'domain_not_allowed' || error === 'AccessDenied') {
     return 'Tu cuenta no pertenece al dominio autorizado para esta aplicacion.';
   }
-  return 'No se pudo iniciar sesion. Intenta nuevamente.';
+  if (error === 'Configuration') {
+    return 'Error de configuracion del servidor (NEXTAUTH_SECRET / NEXTAUTH_URL / OAuth). Revisá variables en Vercel y redeploy.';
+  }
+  if (error === 'OAuthSignin' || error === 'OAuthCallback') {
+    return 'Fallo el callback de Google. Revisá en Google Cloud Console la URI de redireccion: /api/auth/callback/google para tu dominio.';
+  }
+  return `No se pudo iniciar sesion (codigo: ${error}). Intenta nuevamente o revisá logs en Vercel.`;
 }
 
 export default function LoginPage() {
@@ -44,7 +57,7 @@ function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
-  const error = getErrorMessage(searchParams.get('error'));
+  const error = getErrorMessage(normalizeOAuthError(searchParams.get('error')));
 
   useEffect(() => {
     if (authBypassedInDev()) {
