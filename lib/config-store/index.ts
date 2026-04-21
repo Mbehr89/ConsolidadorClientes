@@ -153,7 +153,10 @@ async function getRedisDirectClient() {
   if (!url) return null;
 
   const g = globalThis as typeof globalThis & {
-    __configStoreRedisClient?: Promise<import('redis').RedisClientType>;
+    __configStoreRedisClient?: Promise<{
+      get: (key: string) => Promise<string | null>;
+      set: (key: string, value: string) => Promise<unknown>;
+    }>;
   };
 
   if (!g.__configStoreRedisClient) {
