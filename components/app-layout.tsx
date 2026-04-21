@@ -11,6 +11,7 @@ import {
   Database,
   Gauge,
   Grid3X3,
+  Landmark,
   Link2,
   LogOut,
   Menu,
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { href: '/clientes', label: 'Clientes', icon: Users },
   { href: '/activos', label: 'Activos', icon: Database },
   { href: '/exposicion', label: 'Exposicion', icon: BarChart3 },
+  { href: '/bonos', label: 'Bonos', icon: Landmark },
   { href: '/inconsistencias', label: 'Inconsistencias', icon: AlertTriangle },
 ] as const;
 
