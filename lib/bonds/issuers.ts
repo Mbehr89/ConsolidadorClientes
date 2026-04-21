@@ -30,7 +30,17 @@ export function issuerForTicker(ticker: string): string {
   return 'Otros';
 }
 
-export function uniqueIssuers(tickers: string[]): string[] {
-  const s = new Set(tickers.map(issuerForTicker));
+/** Prioriza el emisor del calendario (columna tipo “Emisor”) si existe. */
+export function issuerLabel(ticker: string, fromCalendar?: string | null): string {
+  const c = fromCalendar?.trim();
+  if (c) return c;
+  return issuerForTicker(ticker);
+}
+
+export function uniqueIssuers(tickers: string[], issuerByTicker: Map<string, string>): string[] {
+  const s = new Set<string>();
+  for (const t of tickers) {
+    s.add(issuerLabel(t, issuerByTicker.get(t)));
+  }
   return [...s].sort((a, b) => a.localeCompare(b, 'es'));
 }

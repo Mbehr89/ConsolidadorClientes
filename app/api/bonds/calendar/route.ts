@@ -29,6 +29,7 @@ export async function GET() {
     const events = parseBondPaymentCalendarCsv(text);
     const serialized = events.map((e) => ({
       asset: e.asset,
+      issuer: e.issuer,
       date: e.date.toISOString(),
       currency: e.currency,
       flowPer100: e.flowPer100,

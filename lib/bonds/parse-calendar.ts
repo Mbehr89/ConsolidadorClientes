@@ -82,7 +82,17 @@ function headerMatchesTicker(h: string): boolean {
   return h.includes('ticker') || h.includes('bono') || h.includes('asset') || h.includes('especie');
 }
 
-function headerMatchesFlowTotal(h: string): boolean {
+/**
+ * Columna de **total** del bloque “Flujo de fondos **c/100 vn**” (no el total en moneda de la posición).
+ */
+function isFlowPer100VnTotalColumn(h: string): boolean {
+  if (!h.includes('c/100') || !h.includes('vn') || !h.includes('total')) return false;
+  if (h.includes('interes') || h.includes('amort')) return false;
+  return h.includes('flujo') || h.includes('fondos');
+}
+
+function headerMatchesFlowTotalLoose(h: string): boolean {
+  if (isFlowPer100VnTotalColumn(h)) return true;
   const hasC100 = h.includes('c/100') || h.includes('c /100') || h.includes('c/ 100');
   const hasVn = h.includes('vn');
   const hasTotal = h.includes('total');
@@ -91,7 +101,6 @@ function headerMatchesFlowTotal(h: string): boolean {
     return true;
   }
   if (
-    h.includes('flujo de fondos total') ||
     h.includes('flujo total') ||
     h.includes('total flow') ||
     h.includes('cash flow total') ||
@@ -99,7 +108,32 @@ function headerMatchesFlowTotal(h: string): boolean {
   ) {
     return true;
   }
+  if (h.includes('flujo de fondos total')) {
+    return !h.includes('c/100');
+  }
   return false;
+}
+
+function pickFlowColumnIndex(norm: string[]): number {
+  for (let i = 0; i < norm.length; i++) {
+    if (isFlowPer100VnTotalColumn(norm[i]!)) return i;
+  }
+  for (let i = 0; i < norm.length; i++) {
+    const h = norm[i]!;
+    if (h.includes('c/100') && h.includes('vn') && h.includes('total')) return i;
+  }
+  for (let i = 0; i < norm.length; i++) {
+    if (headerMatchesFlowTotalLoose(norm[i]!)) return i;
+  }
+  return -1;
+}
+
+function pickIssuerColumnIndex(norm: string[]): number {
+  for (let i = 0; i < norm.length; i++) {
+    const h = norm[i]!;
+    if (h.includes('emisor') && !h.includes('ticker')) return i;
+  }
+  return -1;
 }
 
 function headerMatchesCurrency(h: string): boolean {
@@ -113,8 +147,9 @@ function headerMatchesCurrency(h: string): boolean {
 
 function headerMatchesCoupon(h: string): boolean {
   if (h.includes('total')) return false;
-  if (h.includes('c/100') && h.includes('vn') && h.includes('inter')) return true;
-  return h.includes('cupon') || h.includes('coupon') || h.includes('interes');
+  if (h.includes('tasa de')) return false;
+  if (h.includes('c/100') && h.includes('vn') && (h.includes('interes') || h.includes('inter'))) return true;
+  return h.includes('cupon') || h.includes('coupon');
 }
 
 function headerMatchesAmort(h: string): boolean {
@@ -129,6 +164,7 @@ interface ColMap {
   date: number;
   ticker: number;
   flow: number;
+  issuer?: number;
   currency?: number;
   coupon?: number;
   amort?: number;
@@ -140,7 +176,6 @@ function tryMapHeaders(headers: string[]): ColMap | null {
   const n = norm.length;
   let date = -1;
   let ticker = -1;
-  let flow = -1;
   let currency: number | undefined;
   let coupon: number | undefined;
   let amort: number | undefined;
@@ -150,25 +185,26 @@ function tryMapHeaders(headers: string[]): ColMap | null {
     const h = norm[i]!;
     if (date < 0 && headerMatchesDate(h)) date = i;
     if (ticker < 0 && headerMatchesTicker(h)) ticker = i;
-    if (flow < 0 && headerMatchesFlowTotal(h)) flow = i;
     if (currency === undefined && headerMatchesCurrency(h)) currency = i;
     if (coupon === undefined && headerMatchesCoupon(h)) coupon = i;
     if (amort === undefined && headerMatchesAmort(h)) amort = i;
     if (residual === undefined && headerMatchesResidual(h)) residual = i;
   }
 
-  if (flow < 0) {
-    for (let i = 0; i < n; i++) {
-      const h = norm[i]!;
-      if (h.includes('total') && (h.includes('flujo') || h.includes('flow'))) {
-        flow = i;
-        break;
-      }
-    }
-  }
+  const flow = pickFlowColumnIndex(norm);
+  const issuerIx = pickIssuerColumnIndex(norm);
 
   if (date < 0 || ticker < 0 || flow < 0) return null;
-  return { date, ticker, flow, currency, coupon, amort, residual };
+  return {
+    date,
+    ticker,
+    flow,
+    ...(issuerIx >= 0 ? { issuer: issuerIx } : {}),
+    currency,
+    coupon,
+    amort,
+    residual,
+  };
 }
 
 function mergeHeaders(prev: string[] | null, curr: string[]): string[] {
@@ -236,6 +272,11 @@ export function parseBondPaymentCalendarCsv(csvText: string): BondPaymentEvent[]
       flowPer100: flowTotal,
     };
 
+    if (colMap.issuer !== undefined) {
+      const iss = stripBom(row[colMap.issuer] ?? '').trim();
+      if (iss) ev.issuer = iss;
+    }
+
     if (colMap.coupon !== undefined) {
       const v = parseNumber(row[colMap.coupon] ?? '');
       if (v !== undefined) ev.couponPer100 = v;
@@ -261,4 +302,13 @@ export function uniqueTickers(events: BondPaymentEvent[]): string[] {
   const s = new Set<string>();
   for (const e of events) s.add(e.asset);
   return [...s].sort();
+}
+
+/** Primer emisor no vacío por ticker (el CSV repite el mismo emisor en cada fila). */
+export function issuerByTickerFromEvents(events: BondPaymentEvent[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const e of events) {
+    if (e.issuer && !m.has(e.asset)) m.set(e.asset, e.issuer);
+  }
+  return m;
 }

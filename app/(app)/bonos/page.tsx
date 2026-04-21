@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics, teaToTnaMonthly } from '@/lib/bonds/metrics';
-import { uniqueTickers } from '@/lib/bonds/parse-calendar';
-import { issuerForTicker, uniqueIssuers } from '@/lib/bonds/issuers';
+import { issuerByTickerFromEvents, uniqueTickers } from '@/lib/bonds/parse-calendar';
+import { issuerLabel, uniqueIssuers } from '@/lib/bonds/issuers';
 
 const PORTFOLIO_LS = 'consolidador-bond-portfolio-v1';
 
@@ -16,6 +16,7 @@ type PortfolioLine = { ticker: string; weightPct: number };
 function reviveEvents(raw: Array<Record<string, unknown>>): BondPaymentEvent[] {
   return raw.map((r) => ({
     asset: String(r.asset),
+    issuer: r.issuer != null && String(r.issuer).trim() !== '' ? String(r.issuer).trim() : undefined,
     date: new Date(String(r.date)),
     currency: String(r.currency ?? 'USD'),
     flowPer100: Number(r.flowPer100),
@@ -109,7 +110,8 @@ export default function BonosPage() {
   }, []);
 
   const tickers = useMemo(() => uniqueTickers(events), [events]);
-  const issuers = useMemo(() => uniqueIssuers(tickers), [tickers]);
+  const issuerByTicker = useMemo(() => issuerByTickerFromEvents(events), [events]);
+  const issuers = useMemo(() => uniqueIssuers(tickers, issuerByTicker), [tickers, issuerByTicker]);
 
   const valuationAsDate = useMemo(() => {
     const [y, m, d] = valuationDate.split('-').map(Number);
@@ -139,10 +141,10 @@ export default function BonosPage() {
     }> = [];
     for (const t of tickers) {
       const m = computeBondYieldMetrics(events, t, valuationAsDate, dirtyN, nominalN, fx);
-      out.push({ ticker: t, issuer: issuerForTicker(t), metrics: m });
+      out.push({ ticker: t, issuer: issuerLabel(t, issuerByTicker.get(t)), metrics: m });
     }
     return out;
-  }, [events, tickers, valuationAsDate, dirtyN, nominalN, fx]);
+  }, [events, tickers, issuerByTicker, valuationAsDate, dirtyN, nominalN, fx]);
 
   const filteredRows = useMemo(() => {
     let list = rows;
@@ -304,7 +306,7 @@ export default function BonosPage() {
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-3">
             <div className="sm:col-span-3">
-              <label className="text-label mb-1 block">Emisor (heurística)</label>
+              <label className="text-label mb-1 block">Emisor</label>
               <select
                 value={issuerFilter}
                 onChange={(e) => setIssuerFilter(e.target.value)}

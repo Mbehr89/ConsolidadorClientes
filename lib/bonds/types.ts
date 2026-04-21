@@ -3,6 +3,8 @@
  */
 export interface BondPaymentEvent {
   asset: string;
+  /** Emisor (ej. columna B en planilla tipo “Base Emisor”). */
+  issuer?: string;
   date: Date;
   currency: string;
   flowPer100: number;
