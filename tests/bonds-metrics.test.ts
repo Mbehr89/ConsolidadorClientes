@@ -25,4 +25,20 @@ describe('computeBondYieldMetrics', () => {
     expect(m.modifiedDuration).not.toBeNull();
     expect(m.macaulayYears).not.toBeNull();
   });
+
+  it('supports negative YTM when price is above future flow value', () => {
+    const events: BondPaymentEvent[] = [
+      {
+        asset: 'NEG',
+        date: new Date(Date.UTC(2026, 0, 1)),
+        currency: 'USD',
+        flowPer100: 100,
+      },
+    ];
+    const valuation = new Date(Date.UTC(2025, 0, 1));
+    const m = computeBondYieldMetrics(events, 'NEG', valuation, 120, 100, 1);
+    expect(m.futureFlowsCount).toBe(1);
+    expect(m.ytmAnnualEffective).not.toBeNull();
+    expect(m.ytmAnnualEffective!).toBeLessThan(0);
+  });
 });

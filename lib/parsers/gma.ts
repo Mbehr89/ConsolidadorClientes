@@ -126,6 +126,7 @@ function parse(
   let currentDescripcion: string = '';
   let currentClase: Position['clase_activo'] = 'other';
   let currentFormaLegal: Position['forma_legal'] = null;
+  let currentMonedaEmision: string = 'ARS';
   let currentMonedaSubtipo: string | null = null;
   let currentIsCashBlock = false;
   let fechaReporte = '';
@@ -164,6 +165,7 @@ function parse(
         const secInfo = classifySeccion(col0);
         currentClase = secInfo.clase;
         currentFormaLegal = secInfo.formaLegal;
+        currentMonedaEmision = secInfo.monedaEmision;
         currentMonedaSubtipo = secInfo.monedaSubtipo;
         currentIsCashBlock = secInfo.isCash;
         continue;
@@ -199,6 +201,7 @@ function parse(
           currentDescripcion,
           currentClase,
           currentFormaLegal,
+          currentMonedaEmision,
           currentMonedaSubtipo,
           currentIsCashBlock,
           productorColIdx
@@ -251,6 +254,7 @@ function parseDataRow(
   descripcion: string,
   claseActivo: Position['clase_activo'],
   formaLegal: Position['forma_legal'],
+  monedaEmision: string,
   monedaSubtipo: string | null,
   isCashBlock: boolean,
   productorColIdx: number | null
@@ -270,6 +274,12 @@ function parseDataRow(
   const valuacionLocal = parseNumeric(row[11]) ?? 0;
 
   const posWarnings: string[] = [];
+  const vnScaleFactor = !isCashBlock ? inferGmaVnScaleFactor(totalNeto, cotizLocal, valuacionLocal) : 1;
+  const cotizEmisionAdj = vnScaleFactor > 0 ? cotizEmision / vnScaleFactor : cotizEmision;
+  const cotizLocalAdj = vnScaleFactor > 0 ? cotizLocal / vnScaleFactor : cotizLocal;
+  if (!isCashBlock && vnScaleFactor !== 1) {
+    posWarnings.push(`GMA_PRECIO_ESCALA_VN_${vnScaleFactor}`);
+  }
 
   // ─── Parse fecha ───
   let fechaReporte = '';
@@ -329,11 +339,13 @@ function parseDataRow(
     }
   } else {
     // Instrument blocks
-    if (cotizLocal > 1 && cotizEmision !== cotizLocal) {
-      // Broker provided FX: cotizLocal is ARS price, cotizEmision is native currency price
+    moneda = monedaEmision;
+    if (cotizLocal > 1 && cotizEmisionAdj !== cotizLocalAdj) {
+      // Broker provided FX: cotizLocal (I) is ARS price, cotizEmision (F) is price in emission currency (USD).
+      // Both were normalized by VN scale inferred from I vs L.
       valorMercadoUsd = valuacionEmision; // Already in emisor currency (USD for bonds/ONs)
       fxSource = 'broker';
-    } else if (cotizEmision === cotizLocal) {
+    } else if (cotizEmisionAdj === cotizLocalAdj) {
       // ARS instrument (acciones, CEDEARs) — cotiz is ARS price
       moneda = 'ARS';
       if (opts.fx_manual && opts.fx_manual > 0) {
@@ -397,7 +409,8 @@ function parseDataRow(
     cantidad: totalNeto,
     cantidad_disponible: disponible > 0 ? disponible : null,
     cantidad_no_disponible: noDisponible > 0 ? noDisponible : null,
-    precio_mercado: cotizEmision > 0 ? cotizEmision : null,
+    // Precio de mercado por unidad/VN, normalizado por factor detectado con I (ARS) vs L (valuación ARS).
+    precio_mercado: cotizEmisionAdj > 0 ? cotizEmisionAdj : null,
     moneda,
     moneda_subtipo: monedaSubtipo,
     valor_mercado_local: valuacionLocal,
@@ -433,6 +446,7 @@ function isSeccionNivel1(text: string): boolean {
 interface SeccionInfo {
   clase: Position['clase_activo'];
   formaLegal: Position['forma_legal'];
+  monedaEmision: string;
   monedaSubtipo: string | null;
   isCash: boolean;
 }
@@ -444,6 +458,7 @@ function classifySeccion(text: string): SeccionInfo {
       return {
         clase: 'cash',
         formaLegal: null,
+        monedaEmision: 'ARS',
         monedaSubtipo: subtipo === 'ARS' ? null : subtipo,
         isCash: true,
       };
@@ -464,13 +479,14 @@ function classifySeccion(text: string): SeccionInfo {
       return {
         clase: info.clase,
         formaLegal: info.formaLegal,
+        monedaEmision: info.monedaEmision,
         monedaSubtipo,
         isCash: false,
       };
     }
   }
 
-  return { clase: 'other', formaLegal: null, monedaSubtipo: null, isCash: false };
+  return { clase: 'other', formaLegal: null, monedaEmision: 'ARS', monedaSubtipo: null, isCash: false };
 }
 
 /** Parse level 2 section header to extract ticker and description */
@@ -497,6 +513,29 @@ function parseSeccion2(text: string): { ticker: string | null; descripcion: stri
   }
 
   return { ticker: null, descripcion: text };
+}
+
+function inferGmaVnScaleFactor(cantidad: number, precioArsColI: number, valuacionArsColL: number): number {
+  if (!Number.isFinite(cantidad) || !Number.isFinite(precioArsColI) || !Number.isFinite(valuacionArsColL)) return 1;
+  if (cantidad === 0 || precioArsColI === 0 || valuacionArsColL === 0) return 1;
+
+  const raw = Math.abs(cantidad * precioArsColI);
+  const target = Math.abs(valuacionArsColL);
+  if (raw === 0 || target === 0) return 1;
+
+  const candidates = [1, 10, 100, 1000, 10000];
+  let best = 1;
+  let bestErr = Number.POSITIVE_INFINITY;
+  for (const factor of candidates) {
+    const implied = raw / factor;
+    const relErr = Math.abs(implied - target) / target;
+    if (relErr < bestErr) {
+      bestErr = relErr;
+      best = factor;
+    }
+  }
+
+  return bestErr <= 0.05 ? best : 1;
 }
 
 // ─── Result builder ─────────────────────────────────────

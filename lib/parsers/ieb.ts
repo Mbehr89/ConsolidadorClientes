@@ -255,6 +255,8 @@ function parseRow(
   const importe = parseNumeric(row[colIdx.importe]) ?? 0;
   const tipoCambio = parseNumeric(row[colIdx.tipoCambio]) ?? 1;
   const tipoEspecie = parseNumeric(row[colIdx.tipoEspecie]) ?? 0;
+  const priceScaleFactor = inferPriceScaleFactor(cantidad, precio, importe);
+  const precioLocalNormalizado = priceScaleFactor > 0 ? precio / priceScaleFactor : precio;
 
   const posWarnings: string[] = [];
 
@@ -263,12 +265,15 @@ function parseRow(
     tipoEspecie, ticker, descripcion, opts
   );
   posWarnings.push(...classification.warnings);
+  if (priceScaleFactor !== 1) {
+    posWarnings.push(`IEB_PRECIO_ESCALA_VN_${priceScaleFactor}`);
+  }
 
   // ─── FX logic ───
   let valorMercadoUsd: number | null = null;
   let fxSource: Position['fx_source'] = 'manual';
   let moneda: string = 'ARS';
-  let precioMercado: number | null = precio;
+  let precioMercado: number | null = precioLocalNormalizado;
 
   if (TC_NON_FX.has(tipoCambio)) {
     // TC=1 (pesos) or TC=2 (equity BYMA ARS) — need manual FX
@@ -280,8 +285,9 @@ function parseRow(
     // Real FX rate (1390, 1415, 1465, etc.)
     valorMercadoUsd = importe / tipoCambio;
     fxSource = 'broker';
-    // The price in emisor currency (USD) = precio_ars / tc
-    precioMercado = tipoCambio > 0 ? precio / tipoCambio : precio;
+    // En IEB el precio del statement (columna J) se mantiene en moneda local,
+    // ajustado por escala VN. El precio en USD se deriva por separado.
+    precioMercado = precioLocalNormalizado;
     moneda = 'ARS'; // reported in ARS, USD derived
   } else {
     // Atypical TC (e.g. 61) — process but warn
@@ -364,6 +370,30 @@ function parseRow(
   };
 
   return position;
+}
+
+function inferPriceScaleFactor(cantidad: number, precio: number, importe: number): number {
+  if (!Number.isFinite(cantidad) || !Number.isFinite(precio) || !Number.isFinite(importe)) return 1;
+  if (cantidad === 0 || precio === 0 || importe === 0) return 1;
+
+  const raw = Math.abs(cantidad * precio);
+  const target = Math.abs(importe);
+  if (raw === 0 || target === 0) return 1;
+
+  const candidates = [1, 10, 100, 1000, 10000];
+  let best = 1;
+  let bestErr = Number.POSITIVE_INFINITY;
+  for (const factor of candidates) {
+    const implied = raw / factor;
+    const relErr = Math.abs(implied - target) / target;
+    if (relErr < bestErr) {
+      bestErr = relErr;
+      best = factor;
+    }
+  }
+
+  // Evitar sobreajuste: si no hay match razonable, conservar factor 1.
+  return bestErr <= 0.05 ? best : 1;
 }
 
 

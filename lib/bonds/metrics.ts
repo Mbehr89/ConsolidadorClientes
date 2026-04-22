@@ -41,7 +41,7 @@ function npvFlows(
 }
 
 /**
- * Resuelve y >= 0 tal que sum(amt/(1+y)^t) = targetValue.
+ * Resuelve y > -1 tal que sum(amt/(1+y)^t) = targetValue.
  */
 export function solveAnnualEffectiveYield(
   flows: { t: number; amt: number }[],
@@ -49,13 +49,17 @@ export function solveAnnualEffectiveYield(
 ): number | null {
   if (flows.length === 0 || targetValue <= 0) return null;
 
-  const atZero = npvFlows(flows, 0);
-  if (!Number.isFinite(atZero) || atZero < targetValue) {
+  // Bracketing robusto: permite TIR negativa (y > -1).
+  const loFloor = -0.999999;
+  let lo = loFloor;
+  let hi = 2;
+
+  let npvLo = npvFlows(flows, lo);
+  if (!Number.isFinite(npvLo)) npvLo = Number.POSITIVE_INFINITY;
+  if (npvLo < targetValue) {
     return null;
   }
 
-  let lo = 0;
-  let hi = 2;
   while (npvFlows(flows, hi) > targetValue && hi < 1e6) {
     hi *= 2;
   }

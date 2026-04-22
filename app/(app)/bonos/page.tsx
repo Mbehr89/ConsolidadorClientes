@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics, teaToTnaMonthly } from '@/lib/bonds/metrics';
 import { issuerByTickerFromEvents, uniqueTickers } from '@/lib/bonds/parse-calendar';
-import { issuerLabel, uniqueIssuers } from '@/lib/bonds/issuers';
+import { issuerLabel } from '@/lib/bonds/issuers';
 
 const PORTFOLIO_LS = 'consolidador-bond-portfolio-v1';
 
@@ -46,10 +46,10 @@ export default function BonosPage() {
     const d = new Date();
     return d.toISOString().slice(0, 10);
   });
+  const [selectedTicker, setSelectedTicker] = useState<string>('');
   const [dirtyPrice, setDirtyPrice] = useState('85');
   const [nominal, setNominal] = useState('100');
   const [usdArsFx, setUsdArsFx] = useState('1200');
-
   const [issuerFilter, setIssuerFilter] = useState<string>('__all__');
   const [durMin, setDurMin] = useState('');
   const [durMax, setDurMax] = useState('');
@@ -111,7 +111,6 @@ export default function BonosPage() {
 
   const tickers = useMemo(() => uniqueTickers(events), [events]);
   const issuerByTicker = useMemo(() => issuerByTickerFromEvents(events), [events]);
-  const issuers = useMemo(() => uniqueIssuers(tickers, issuerByTicker), [tickers, issuerByTicker]);
 
   const valuationAsDate = useMemo(() => {
     const [y, m, d] = valuationDate.split('-').map(Number);
@@ -146,6 +145,12 @@ export default function BonosPage() {
     return out;
   }, [events, tickers, issuerByTicker, valuationAsDate, dirtyN, nominalN, fx]);
 
+  const issuers = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) set.add(r.issuer);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     let list = rows;
     if (issuerFilter !== '__all__') {
@@ -154,25 +159,38 @@ export default function BonosPage() {
     const minD = durMin.trim() ? Number(durMin.replace(',', '.')) : null;
     const maxD = durMax.trim() ? Number(durMax.replace(',', '.')) : null;
     if (minD != null && Number.isFinite(minD)) {
-      list = list.filter((r) => {
-        const d = r.metrics.modifiedDuration;
-        return d != null && d >= minD;
-      });
+      list = list.filter((r) => (r.metrics.modifiedDuration ?? Number.NEGATIVE_INFINITY) >= minD);
     }
     if (maxD != null && Number.isFinite(maxD)) {
-      list = list.filter((r) => {
-        const d = r.metrics.modifiedDuration;
-        return d != null && d <= maxD;
-      });
+      list = list.filter((r) => (r.metrics.modifiedDuration ?? Number.POSITIVE_INFINITY) <= maxD);
     }
     return list;
   }, [rows, issuerFilter, durMin, durMax]);
+
+  const filteredTickers = useMemo(() => filteredRows.map((r) => r.ticker), [filteredRows]);
+
+  useEffect(() => {
+    if (filteredTickers.length === 0) {
+      setSelectedTicker('');
+      return;
+    }
+    setSelectedTicker((prev) => (prev && filteredTickers.includes(prev) ? prev : filteredTickers[0]!));
+  }, [filteredTickers]);
+
+  const selectedRow = useMemo(() => {
+    if (!selectedTicker) return null;
+    return filteredRows.find((r) => r.ticker === selectedTicker) ?? null;
+  }, [filteredRows, selectedTicker]);
 
   const metricsByTicker = useMemo(() => {
     const m = new Map<string, (typeof rows)[0]['metrics']>();
     for (const r of rows) m.set(r.ticker, r.metrics);
     return m;
   }, [rows]);
+  const selectedInPortfolio = useMemo(
+    () => (!!selectedTicker ? portfolio.some((p) => p.ticker === selectedTicker) : false),
+    [portfolio, selectedTicker]
+  );
 
   const portfolioWeightSum = useMemo(
     () => portfolio.reduce((s, l) => s + (Number.isFinite(l.weightPct) ? l.weightPct : 0), 0),
@@ -250,16 +268,66 @@ export default function BonosPage() {
         </p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2 print:hidden">
+      <div className="grid gap-4 print:hidden">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Parámetros de valuación</CardTitle>
             <CardDescription>
-              Un mismo precio sucio (por 100) y nominal se aplican a todos los bonos de la tabla para comparar. Ajustá
-              el tipo USD/ARS si hay cupones en pesos.
+              Filtrá bonos por emisor y duration para encontrar más rápido qué especie analizar. El cálculo se actualiza
+              automáticamente.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2 grid gap-3 xl:grid-cols-3">
+              <div>
+                <label className="text-label mb-1 block">Emisor</label>
+                <select
+                  value={issuerFilter}
+                  onChange={(e) => setIssuerFilter(e.target.value)}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                >
+                  <option value="__all__">Todos</option>
+                  {issuers.map((iss) => (
+                    <option key={iss} value={iss}>
+                      {iss}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-label mb-1 block">Dur. modif. mín (años)</label>
+                <input
+                  value={durMin}
+                  onChange={(e) => setDurMin(e.target.value)}
+                  placeholder="ej. 2"
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-label mb-1 block">Dur. modif. máx (años)</label>
+                <input
+                  value={durMax}
+                  onChange={(e) => setDurMax(e.target.value)}
+                  placeholder="ej. 8"
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                />
+              </div>
+              <div className="xl:col-span-3">
+                <label className="text-label mb-1 block">Bono a analizar</label>
+                <select
+                  value={selectedTicker}
+                  onChange={(e) => setSelectedTicker(e.target.value)}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm font-mono"
+                >
+                  {filteredTickers.length === 0 && <option value="">Sin bonos para estos filtros</option>}
+                  {filteredTickers.map((ticker) => (
+                    <option key={ticker} value={ticker}>
+                      {ticker} · {issuerLabel(ticker, issuerByTicker.get(ticker))}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <div>
               <label className="text-label mb-1 block">Fecha de valuación</label>
               <input
@@ -296,110 +364,81 @@ export default function BonosPage() {
                 inputMode="decimal"
               />
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Filtros</CardTitle>
-            <CardDescription>Duration modificada según el precio y fecha arriba.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-3">
-            <div className="sm:col-span-3">
-              <label className="text-label mb-1 block">Emisor</label>
-              <select
-                value={issuerFilter}
-                onChange={(e) => setIssuerFilter(e.target.value)}
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              >
-                <option value="__all__">Todos</option>
-                {issuers.map((iss) => (
-                  <option key={iss} value={iss}>
-                    {iss}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-label mb-1 block">Dur. modif. mín (años)</label>
-              <input
-                value={durMin}
-                onChange={(e) => setDurMin(e.target.value)}
-                placeholder="ej. 2"
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-label mb-1 block">Dur. modif. máx (años)</label>
-              <input
-                value={durMax}
-                onChange={(e) => setDurMax(e.target.value)}
-                placeholder="ej. 8"
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              />
+            <div className="sm:col-span-2 rounded-md border border-border/70 bg-muted/30 p-3" id="bono-calculadora">
+              {!selectedRow && (
+                <p className="text-sm text-muted-foreground">
+                  No hay bonos cargados para analizar. Revisá la configuración del calendario de pagos.
+                </p>
+              )}
+              {selectedRow && (
+                <>
+                  <p className="text-caption mb-2">
+                    Calculadora en vivo:{' '}
+                    <span className="font-mono font-medium text-foreground">{selectedRow.ticker}</span>
+                  </p>
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    Cálculo automático: se actualiza al cambiar bono, fecha, precio, nominal o USD/ARS.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <p className="text-sm text-muted-foreground">
+                      TEA (YTM):{' '}
+                      <span className="font-mono text-foreground">{fmtPct(selectedRow.metrics.ytmAnnualEffective)}</span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      TNA*:{' '}
+                      <span className="font-mono text-foreground">
+                        {selectedRow.metrics.ytmAnnualEffective != null
+                          ? `${teaToTnaMonthly(selectedRow.metrics.ytmAnnualEffective).toFixed(2)}%`
+                          : '—'}
+                      </span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Macaulay:{' '}
+                      <span className="font-mono text-foreground">{fmtNum(selectedRow.metrics.macaulayYears)} años</span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Dur. modificada:{' '}
+                      <span className="font-mono text-foreground">{fmtNum(selectedRow.metrics.modifiedDuration)} años</span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Convexidad:{' '}
+                      <span className="font-mono text-foreground">{fmtNum(selectedRow.metrics.convexity, 4)}</span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Flujos futuros:{' '}
+                      <span className="font-mono text-foreground">{selectedRow.metrics.futureFlowsCount}</span>
+                    </p>
+                  </div>
+                  {selectedRow.metrics.futureFlowsCount === 0 && (
+                    <p className="mt-2 text-xs text-amber-700">
+                      No hay flujos futuros para la fecha elegida. Probá con otra fecha de valuación.
+                    </p>
+                  )}
+                  {selectedRow.metrics.futureFlowsCount > 0 && selectedRow.metrics.ytmAnnualEffective == null && (
+                    <p className="mt-2 text-xs text-amber-700">
+                      No se puede resolver TIR con estos parámetros. Valor de flujos a 0%:{' '}
+                      <span className="font-mono">{selectedRow.metrics.npvAtZero.toFixed(2)}</span> vs precio valuado:{' '}
+                      <span className="font-mono">{((dirtyN / 100) * nominalN).toFixed(2)}</span>. Ajustá precio, fecha
+                      o tipo de cambio.
+                    </p>
+                  )}
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectedTicker && addToPortfolio(selectedTicker)}
+                      disabled={!selectedTicker || selectedInPortfolio}
+                    >
+                      {selectedInPortfolio ? 'Ya agregado a cartera' : 'Agregar bono a cartera'}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
-
-      <Card className="mt-4">
-        <CardHeader className="print:pb-2">
-          <CardTitle className="text-base">Tabla de bonos</CardTitle>
-          <CardDescription className="print:text-foreground">
-            {filteredRows.length} especies · TEA = TIR efectiva anual · TNA (nominal mensual) opcional
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="data-table-wrap max-h-[min(70vh,560px)] overflow-auto">
-            <table className="w-full min-w-[880px] border-collapse text-left">
-              <thead className="sticky top-0 z-10 bg-card">
-                <tr className="border-b border-border">
-                  <th className="px-3 py-2">Bono</th>
-                  <th className="px-3 py-2">Emisor</th>
-                  <th className="px-3 py-2 text-right">Flujos fut.</th>
-                  <th className="px-3 py-2 text-right">TEA (YTM)</th>
-                  <th className="px-3 py-2 text-right">TNA*</th>
-                  <th className="px-3 py-2 text-right">Macaulay</th>
-                  <th className="px-3 py-2 text-right">Dur. mod.</th>
-                  <th className="px-3 py-2 text-right">Convexidad</th>
-                  <th className="px-3 py-2 print:hidden">Cartera</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((r) => {
-                  const y = r.metrics.ytmAnnualEffective;
-                  const tna = y != null ? teaToTnaMonthly(y) : null;
-                  return (
-                    <tr key={r.ticker} className="border-b border-border/60">
-                      <td className="px-3 py-2 font-mono text-sm font-medium">{r.ticker}</td>
-                      <td className="px-3 py-2 text-sm text-muted-foreground">{r.issuer}</td>
-                      <td className="px-3 py-2 text-right font-mono text-sm">{r.metrics.futureFlowsCount}</td>
-                      <td className="px-3 py-2 text-right font-mono text-sm">{fmtPct(y)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
-                        {tna != null ? `${tna.toFixed(2)}%` : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono text-sm">{fmtNum(r.metrics.macaulayYears)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-sm">{fmtNum(r.metrics.modifiedDuration)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-sm">{fmtNum(r.metrics.convexity, 4)}</td>
-                      <td className="px-3 py-2 print:hidden">
-                        <Button type="button" variant="outline" size="sm" onClick={() => addToPortfolio(r.ticker)}>
-                          Agregar
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {filteredRows.length === 0 && !loading && (
-              <p className="p-6 text-sm text-muted-foreground">No hay bonos que cumplan los filtros.</p>
-            )}
-          </div>
-          <p className="px-4 py-2 text-[11px] text-muted-foreground print:px-0">
-            *TNA aproximada con capitalización mensual equivalente a la TEA mostrada. No es asesoramiento financiero.
-          </p>
-        </CardContent>
-      </Card>
 
       <Card className="mt-4 print:mt-6 print:border-0 print:shadow-none">
         <CardHeader>
@@ -420,8 +459,9 @@ export default function BonosPage() {
             </p>
           )}
           {portfolio.length === 0 && (
-            <p className="text-sm text-muted-foreground">Agregá bonos desde la tabla. Los pesos se guardan en este
-              navegador.</p>
+            <p className="text-sm text-muted-foreground">
+              Agregá bonos desde la calculadora. Los pesos se guardan en este navegador.
+            </p>
           )}
           {portfolio.map((line) => {
             const met = metricsByTicker.get(line.ticker);
@@ -447,7 +487,10 @@ export default function BonosPage() {
                   />
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  Dur. mod. {fmtNum(met?.modifiedDuration)} · TEA {fmtPct(met?.ytmAnnualEffective)}
+                  TEA {fmtPct(met?.ytmAnnualEffective)} · TNA{' '}
+                  {met?.ytmAnnualEffective != null ? `${teaToTnaMonthly(met.ytmAnnualEffective).toFixed(2)}%` : '—'} ·
+                  Macaulay {fmtNum(met?.macaulayYears)} años · Dur. mod. {fmtNum(met?.modifiedDuration)} años · Convexidad{' '}
+                  {fmtNum(met?.convexity, 4)}
                 </div>
                 <Button
                   type="button"

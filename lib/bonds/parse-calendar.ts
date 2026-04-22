@@ -64,8 +64,25 @@ function parseDdMmYyyyDate(raw: string): Date | null {
 export function parseNumber(raw: string): number | undefined {
   const s = stripBom(raw);
   if (!s || /^nan$/i.test(s)) return undefined;
-  const cleaned = s.replace(/\./g, '').replace(',', '.').replace(/[^\d.\-]/g, '');
-  const n = Number(cleaned);
+
+  // Soporta formatos ES/EN: 1.234,56 | 1,234.56 | 1234.56 | 1234,56
+  // y conserva el separador decimal real en vez de inflar magnitudes.
+  const compact = s.replace(/\s+/g, '').replace(/[^\d,.\-]/g, '');
+  if (!compact || compact === '-' || compact === ',' || compact === '.') return undefined;
+
+  const lastDot = compact.lastIndexOf('.');
+  const lastComma = compact.lastIndexOf(',');
+  const decimalSep =
+    lastDot >= 0 && lastComma >= 0 ? (lastDot > lastComma ? '.' : ',') : lastDot >= 0 ? '.' : lastComma >= 0 ? ',' : null;
+
+  let normalized = compact;
+  if (decimalSep === '.') {
+    normalized = normalized.replace(/,/g, '');
+  } else if (decimalSep === ',') {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  }
+
+  const n = Number(normalized);
   return Number.isFinite(n) ? n : undefined;
 }
 
@@ -93,13 +110,15 @@ function isFlowPer100VnTotalColumn(h: string): boolean {
 
 function headerMatchesFlowTotalLoose(h: string): boolean {
   if (isFlowPer100VnTotalColumn(h)) return true;
+  // Nunca usar la columna de montos totales de la posición (escala incorrecta para TIR c/100).
+  if (h.includes('flujo de fondos total')) return false;
   const hasC100 = h.includes('c/100') || h.includes('c /100') || h.includes('c/ 100');
   const hasVn = h.includes('vn');
   const hasTotal = h.includes('total');
   if (hasC100 && hasVn && hasTotal && !h.includes('solo')) {
-    if (h.includes('flujo de fondos total') && !h.includes('c/100')) return false;
     return true;
   }
+  if (hasC100 && hasVn && !h.includes('inter') && !h.includes('amort')) return true;
   if (
     h.includes('flujo total') ||
     h.includes('total flow') ||
@@ -108,15 +127,35 @@ function headerMatchesFlowTotalLoose(h: string): boolean {
   ) {
     return true;
   }
-  if (h.includes('flujo de fondos total')) {
-    return !h.includes('c/100');
-  }
   return false;
 }
 
 function pickFlowColumnIndex(norm: string[]): number {
   for (let i = 0; i < norm.length; i++) {
     if (isFlowPer100VnTotalColumn(norm[i]!)) return i;
+  }
+  // Soporta headers en dos filas tipo bloque:
+  // "Flujo de fondos c/100 vn" | "Interés" | "Amortización" | "Total"
+  // donde la celda "Total" no arrastra literalmente "c/100 vn".
+  for (let i = 0; i < norm.length; i++) {
+    const h = norm[i]!;
+    if (h !== 'total') continue;
+    const p1 = norm[i - 1] ?? '';
+    const p2 = norm[i - 2] ?? '';
+    const p3 = norm[i - 3] ?? '';
+    const hasC100Context =
+      (p1.includes('c/100') && p1.includes('vn')) ||
+      (p2.includes('c/100') && p2.includes('vn')) ||
+      (p3.includes('c/100') && p3.includes('vn'));
+    const isMonetaryTotalContext =
+      p1.includes('flujo de fondos total') ||
+      p2.includes('flujo de fondos total') ||
+      p3.includes('flujo de fondos total');
+    if (hasC100Context && !isMonetaryTotalContext) return i;
+  }
+  for (let i = 0; i < norm.length; i++) {
+    const h = norm[i]!;
+    if (h.includes('c/100') && h.includes('vn') && !h.includes('inter') && !h.includes('amort')) return i;
   }
   for (let i = 0; i < norm.length; i++) {
     const h = norm[i]!;
@@ -148,8 +187,9 @@ function headerMatchesCurrency(h: string): boolean {
 function headerMatchesCoupon(h: string): boolean {
   if (h.includes('total')) return false;
   if (h.includes('tasa de')) return false;
+  if (h.includes('interes') && h.includes('vn')) return true;
   if (h.includes('c/100') && h.includes('vn') && (h.includes('interes') || h.includes('inter'))) return true;
-  return h.includes('cupon') || h.includes('coupon');
+  return h.includes('cupon') || h.includes('coupon') || h.includes('interes');
 }
 
 function headerMatchesAmort(h: string): boolean {

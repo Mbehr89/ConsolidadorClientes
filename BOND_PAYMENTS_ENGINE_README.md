@@ -4,7 +4,7 @@ Este documento está pensado para **copiarlo a otro proyecto** (por ejemplo como
 
 ## Objetivo
 
-- Leer un **CSV de calendario de pagos** (export de Google Sheets) definido por la variable de entorno `VITE_BOND_PAYMENTS_URL`.
+- Leer un **CSV de calendario de pagos** (export de Google Sheets) definido por la variable de entorno **`BOND_PAYMENTS_URL`** (este repo, Next.js). En un proyecto Vite suele llamarse `VITE_BOND_PAYMENTS_URL`.
 - Producir una lista de **eventos por bono y fecha**: montos **por cada 100 de nominal** (`flowPer100`), más columnas opcionales (cupón/amort/moneda).
 - Con esa curva + **valor de posición en USD** + **nominal** (o precio sucio + moneda del VN) + **tipo de cambio USD/ARS** si aplica, calcular **TIR (YTM anual efectiva)**, **Macaulay**, **duration modificada** y **convexidad** con las mismas convenciones descritas abajo.
 
@@ -180,7 +180,7 @@ Con el \(y\) encontrado y los mismos flujos:
 
 ## Checklist de implementación (para Cursor en el otro proyecto)
 
-1. [ ] Variable `VITE_BOND_PAYMENTS_URL` (o equivalente) y fetch sin caché.
+1. [ ] Variable `BOND_PAYMENTS_URL` (Next.js / servidor) o `VITE_BOND_PAYMENTS_URL` (Vite) y fetch sin caché.
 2. [ ] Parser CSV con detección de separador y headers en 5 filas + merge con fila anterior.
 3. [ ] Mapeo de columnas con la tabla y prioridades de arriba.
 4. [ ] `parseDdMmYyyyDate` + `parseNumber` como se describe.
