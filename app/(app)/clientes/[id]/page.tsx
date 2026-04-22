@@ -54,28 +54,9 @@ export default function ClienteDetailPage() {
   }, [clienteId]);
   const exportPdfFilename = useMemo(() => exportFilename.replace(/\.xlsx$/i, '.pdf'), [exportFilename]);
 
-  if (!state.hasParsed) {
-    return (
-      <div>
-        <h2 className="text-2xl font-bold">Cliente</h2>
-        <p className="text-muted-foreground mt-4">Subí archivos en <Link href="/upload" className="text-primary underline">Upload</Link> primero.</p>
-      </div>
-    );
-  }
-
-  if (positions.length === 0) {
-    return (
-      <div>
-        <Link href="/clientes" className="text-sm text-primary hover:underline">← Volver a clientes</Link>
-        <h2 className="text-2xl font-bold mt-4">Cliente no encontrado</h2>
-        <p className="text-muted-foreground mt-2">ID: {clienteId}</p>
-      </div>
-    );
-  }
-
-  const titular = positions[0]!.titular;
-  const tipoTitular = positions[0]!.tipo_titular;
-  const grupoId = positions[0]!.grupo_id;
+  const titular = positions[0]?.titular ?? '';
+  const tipoTitular = positions[0]?.tipo_titular ?? 'persona';
+  const grupoId = positions[0]?.grupo_id ?? null;
   const grupo = grupoId ? state.grupos.find((g) => g.id === grupoId) : null;
   const totalUsd = positions.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
 
@@ -255,6 +236,33 @@ export default function ClienteDetailPage() {
     });
     return list;
   }, [positions, sortBy, sortDir, totalUsd]);
+
+  if (!state.hasParsed) {
+    return (
+      <div>
+        <h2 className="text-2xl font-bold">Cliente</h2>
+        <p className="text-muted-foreground mt-4">
+          Subí archivos en{' '}
+          <Link href="/upload" className="text-primary underline">
+            Upload
+          </Link>{' '}
+          primero.
+        </p>
+      </div>
+    );
+  }
+
+  if (positions.length === 0) {
+    return (
+      <div>
+        <Link href="/clientes" className="text-sm text-primary hover:underline">
+          ← Volver a clientes
+        </Link>
+        <h2 className="text-2xl font-bold mt-4">Cliente no encontrado</h2>
+        <p className="text-muted-foreground mt-2">ID: {clienteId}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-6xl">

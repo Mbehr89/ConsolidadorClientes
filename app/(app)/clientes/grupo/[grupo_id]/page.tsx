@@ -53,33 +53,6 @@ export default function GrupoDetailPage() {
     });
   }, [state.allPositions, grupoId, grupo]);
 
-  if (!state.hasParsed) {
-    return (
-      <div>
-        <h2 className="text-2xl font-bold">Grupo</h2>
-        <p className="text-muted-foreground mt-4">
-          Subí archivos en{' '}
-          <Link href="/upload" className="text-primary underline">
-            Upload
-          </Link>{' '}
-          primero.
-        </p>
-      </div>
-    );
-  }
-
-  if (!grupo && positions.length === 0) {
-    return (
-      <div>
-        <Link href="/clientes" className="text-sm text-primary hover:underline">
-          ← Volver a clientes
-        </Link>
-        <h2 className="text-2xl font-bold mt-4">Grupo no encontrado</h2>
-        <p className="text-muted-foreground mt-2">ID: {grupoId}</p>
-      </div>
-    );
-  }
-
   const nombre = grupo?.nombre ?? 'Grupo';
   const totalUsd = positions.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
 
@@ -257,6 +230,33 @@ export default function GrupoDetailPage() {
     });
     return list;
   }, [positions, sortBy, sortDir, totalUsd]);
+
+  if (!state.hasParsed) {
+    return (
+      <div>
+        <h2 className="text-2xl font-bold">Grupo</h2>
+        <p className="text-muted-foreground mt-4">
+          Subí archivos en{' '}
+          <Link href="/upload" className="text-primary underline">
+            Upload
+          </Link>{' '}
+          primero.
+        </p>
+      </div>
+    );
+  }
+
+  if (!grupo && positions.length === 0) {
+    return (
+      <div>
+        <Link href="/clientes" className="text-sm text-primary hover:underline">
+          ← Volver a clientes
+        </Link>
+        <h2 className="text-2xl font-bold mt-4">Grupo no encontrado</h2>
+        <p className="text-muted-foreground mt-2">ID: {grupoId}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-6xl">
