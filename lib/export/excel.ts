@@ -99,7 +99,7 @@ function buildResumenSheet(positions: Position[]): WorkSheet {
   const byLoc = aggregateByField(positions, (p) => BROKERS[p.broker].tipo);
 
   const rows: (string | number | null)[][] = [];
-  rows.push(['Consolidado de tenencias']);
+  rows.push(['BEHR ADVISORY']);
   rows.push([]);
   rows.push(['AUM total (USD)', total]);
   rows.push(['Fecha(s) de reporte', fechaTxt]);

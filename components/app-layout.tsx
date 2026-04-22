@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { signOut, useSession } from 'next-auth/react';
@@ -141,7 +142,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         )}
       >
         <div className="flex h-12 items-center justify-between gap-2">
-          <h1 className="text-base font-semibold tracking-tight text-white">Consolidador</h1>
+          <Image
+            src="/behr-advisory-logo.png"
+            alt="BEHR ADVISORY"
+            width={130}
+            height={40}
+            className="h-8 w-auto rounded-sm bg-white px-1 py-0.5"
+            priority
+          />
           <Button
             type="button"
             variant="ghost"
@@ -153,7 +161,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <X className="h-5 w-5" />
           </Button>
         </div>
-        <p className="text-[11px] text-white/45">Portfolio intelligence</p>
+        <p className="text-[11px] text-white/45">BEHR portfolio intelligence</p>
 
         <div className="my-4 h-px bg-white/10" />
 
@@ -250,7 +258,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-caption">Workspace</p>
-              <p className="truncate text-sm font-medium text-foreground">Consolidado de tenencias</p>
+              <p className="truncate text-sm font-medium text-foreground">BEHR ADVISORY</p>
             </div>
             <time
               className="hidden shrink-0 text-label capitalize text-muted-foreground lg:block"

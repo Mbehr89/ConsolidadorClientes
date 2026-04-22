@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
+import Image from 'next/image';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,7 +52,15 @@ function LoginFallback() {
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-6 pt-[max(1rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-xl sm:text-2xl">Consolidador de Tenencias</CardTitle>
+          <Image
+            src="/behr-advisory-logo.png"
+            alt="BEHR ADVISORY"
+            width={220}
+            height={72}
+            className="mb-3 h-12 w-auto rounded-sm border border-border/70 bg-white px-2 py-1"
+            priority
+          />
+          <CardTitle className="text-xl sm:text-2xl">BEHR ADVISORY</CardTitle>
           <CardDescription>Cargando...</CardDescription>
         </CardHeader>
       </Card>
@@ -118,7 +127,15 @@ function LoginPageInner() {
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-6 pt-[max(1rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-xl sm:text-2xl">Consolidador de Tenencias</CardTitle>
+          <Image
+            src="/behr-advisory-logo.png"
+            alt="BEHR ADVISORY"
+            width={220}
+            height={72}
+            className="mb-3 h-12 w-auto rounded-sm border border-border/70 bg-white px-2 py-1"
+            priority
+          />
+          <CardTitle className="text-xl sm:text-2xl">BEHR ADVISORY</CardTitle>
           <CardDescription>
             {authModes?.google
               ? 'Ingresa con tu cuenta corporativa o usuario interno.'

@@ -11,8 +11,9 @@ import { BROKERS } from '@/lib/brokers';
 import type { Position } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
+import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
 import { Button } from '@/components/ui/button';
-import { exportFlowReportPdf } from '@/lib/export/flow-report';
+import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/flow-report';
 
 function reviveEvents(raw: Array<Record<string, unknown>>): BondPaymentEvent[] {
   return raw.map((r) => ({
@@ -86,22 +87,31 @@ export default function GrupoDetailPage() {
 
   const bondMetricsByRow = useMemo(() => {
     const out = new Map<number, ReturnType<typeof computeBondYieldMetrics>>();
+    const now = new Date();
+    const valuationDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     for (const p of positions) {
       if (!(p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra')) continue;
-      if (!p.ticker || p.precio_mercado == null || !Number.isFinite(p.precio_mercado)) continue;
+      if (!p.ticker) continue;
       const nominal = Number.isFinite(p.cantidad) && p.cantidad > 0 ? p.cantidad : 100;
       const fxFromPosition =
         p.valor_mercado_usd != null && p.valor_mercado_usd > 0 && p.valor_mercado_local > 0
           ? p.valor_mercado_local / p.valor_mercado_usd
           : 1;
       const usdArsFxRate = Number.isFinite(fxFromPosition) && fxFromPosition > 0 ? fxFromPosition : 1;
-      const unitPriceUsd =
-        p.moneda === 'USD' ? p.precio_mercado : p.precio_mercado / usdArsFxRate;
+      const unitPriceUsdFromStatement =
+        p.precio_mercado != null && Number.isFinite(p.precio_mercado)
+          ? (p.moneda === 'USD' ? p.precio_mercado : p.precio_mercado / usdArsFxRate)
+          : null;
+      const unitPriceUsdFromValuation =
+        nominal > 0 && p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd)
+          ? p.valor_mercado_usd / nominal
+          : null;
+      const unitPriceUsd = unitPriceUsdFromStatement ?? unitPriceUsdFromValuation;
+      if (unitPriceUsd == null || !Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) continue;
       const dirtyPricePer100 = unitPriceUsd * 100;
-      const valuationDate = new Date(`${p.fecha_reporte}T00:00:00Z`);
       const metrics = computeBondYieldMetrics(
         bondEvents,
-        p.ticker.toUpperCase(),
+        normalizeBondTicker(p.ticker),
         valuationDate,
         dirtyPricePer100,
         nominal,
@@ -116,58 +126,101 @@ export default function GrupoDetailPage() {
     const bondRows = positions.filter(
       (p) => p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra'
     );
-    const eligible = bondRows
+    const rowsWithMetrics = bondRows
       .map((p) => ({ p, m: bondMetricsByRow.get(p.source_row) }))
-      .filter(
-        ({ p, m }) =>
-          (p.valor_mercado_usd ?? 0) > 0 &&
-          m != null &&
-          m.ytmAnnualEffective != null &&
-          m.modifiedDuration != null &&
-          Number.isFinite(m.ytmAnnualEffective) &&
-          Number.isFinite(m.modifiedDuration)
+      .filter(({ p, m }) => (p.valor_mercado_usd ?? 0) > 0 && m != null);
+    const summarize = (subset: typeof rowsWithMetrics) => {
+      const ytmRows = subset.filter(
+        ({ m }) => m?.ytmAnnualEffective != null && Number.isFinite(m.ytmAnnualEffective)
       );
-    const summarize = (subset: typeof eligible) => {
-      const sumUsd = subset.reduce((s, x) => s + (x.p.valor_mercado_usd ?? 0), 0);
-      if (sumUsd <= 0) {
-        return { ytm: null as number | null, modDuration: null as number | null, covered: subset.length };
-      }
-      const ytm = subset.reduce(
-        (s, x) => s + ((x.p.valor_mercado_usd ?? 0) / sumUsd) * (x.m!.ytmAnnualEffective as number),
-        0
+      const durRows = subset.filter(
+        ({ m }) => m?.modifiedDuration != null && Number.isFinite(m.modifiedDuration)
       );
-      const modDuration = subset.reduce(
-        (s, x) => s + ((x.p.valor_mercado_usd ?? 0) / sumUsd) * (x.m!.modifiedDuration as number),
-        0
-      );
-      return { ytm, modDuration, covered: subset.length };
+      const sumYtmUsd = ytmRows.reduce((s, x) => s + (x.p.valor_mercado_usd ?? 0), 0);
+      const sumDurUsd = durRows.reduce((s, x) => s + (x.p.valor_mercado_usd ?? 0), 0);
+      const ytm =
+        sumYtmUsd > 0
+          ? ytmRows.reduce(
+              (s, x) => s + ((x.p.valor_mercado_usd ?? 0) / sumYtmUsd) * (x.m!.ytmAnnualEffective as number),
+              0
+            )
+          : null;
+      const modDuration =
+        sumDurUsd > 0
+          ? durRows.reduce(
+              (s, x) => s + ((x.p.valor_mercado_usd ?? 0) / sumDurUsd) * (x.m!.modifiedDuration as number),
+              0
+            )
+          : null;
+      const covered = subset.filter(
+        ({ m }) =>
+          (m?.ytmAnnualEffective != null && Number.isFinite(m.ytmAnnualEffective)) ||
+          (m?.modifiedDuration != null && Number.isFinite(m.modifiedDuration))
+      ).length;
+      return { ytm, modDuration, covered };
     };
 
     const paymentCurrencyByTicker = new Map<string, 'ARS' | 'USD'>();
     for (const ev of bondEvents) {
-      const key = ev.asset.toUpperCase();
+      const key = normalizeBondTicker(ev.asset);
       if (paymentCurrencyByTicker.has(key)) continue;
       const c = ev.currency.toUpperCase();
       paymentCurrencyByTicker.set(key, c.includes('ARS') || c.includes('PESO') ? 'ARS' : 'USD');
     }
 
-    const arsEligible = eligible.filter(({ p }) => {
-      const ticker = (p.ticker ?? '').toUpperCase();
+    const arsEligible = rowsWithMetrics.filter(({ p }) => {
+      const ticker = normalizeBondTicker(p.ticker);
       return paymentCurrencyByTicker.get(ticker) === 'ARS';
     });
-    const usdEligible = eligible.filter(({ p }) => {
-      const ticker = (p.ticker ?? '').toUpperCase();
+    const usdEligible = rowsWithMetrics.filter(({ p }) => {
+      const ticker = normalizeBondTicker(p.ticker);
       return paymentCurrencyByTicker.get(ticker) === 'USD';
     });
-    const overall = summarize(eligible);
+    const overall = summarize(rowsWithMetrics);
     return {
       overall,
       ars: summarize(arsEligible),
       usd: summarize(usdEligible),
-      covered: eligible.length,
+      covered: overall.covered,
       totalBondRows: bondRows.length,
     };
   }, [positions, bondMetricsByRow, bondEvents]);
+
+  const executivePortfolioMetrics = useMemo(() => {
+    const bondRows = positions.filter(
+      (p) => p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra'
+    );
+    const withMetrics = bondRows.map((p) => ({ p, m: bondMetricsByRow.get(p.source_row) }));
+    const ytmRows = withMetrics.filter(
+      ({ p, m }) =>
+        (p.valor_mercado_usd ?? 0) > 0 &&
+        m?.ytmAnnualEffective != null &&
+        Number.isFinite(m.ytmAnnualEffective)
+    );
+    const durRows = withMetrics.filter(
+      ({ p, m }) =>
+        (p.valor_mercado_usd ?? 0) > 0 &&
+        m?.modifiedDuration != null &&
+        Number.isFinite(m.modifiedDuration)
+    );
+    const sumYtmUsd = ytmRows.reduce((s, x) => s + (x.p.valor_mercado_usd ?? 0), 0);
+    const sumDurUsd = durRows.reduce((s, x) => s + (x.p.valor_mercado_usd ?? 0), 0);
+    const ytm =
+      sumYtmUsd > 0
+        ? ytmRows.reduce(
+            (s, x) => s + ((x.p.valor_mercado_usd ?? 0) / sumYtmUsd) * (x.m!.ytmAnnualEffective as number),
+            0
+          )
+        : null;
+    const duration =
+      sumDurUsd > 0
+        ? durRows.reduce(
+            (s, x) => s + ((x.p.valor_mercado_usd ?? 0) / sumDurUsd) * (x.m!.modifiedDuration as number),
+            0
+          )
+        : null;
+    return { ytm, duration };
+  }, [positions, bondMetricsByRow]);
 
   const mappedBondFlows = useMemo(() => {
     const bondPositions = positions.filter(
@@ -175,16 +228,16 @@ export default function GrupoDetailPage() {
     );
     const nominalByTicker = new Map<string, number>();
     for (const p of bondPositions) {
-      const t = (p.ticker ?? '').toUpperCase();
+      const t = normalizeBondTicker(p.ticker);
       if (!t) continue;
       const n = Number.isFinite(p.cantidad) ? p.cantidad : 0;
       nominalByTicker.set(t, (nominalByTicker.get(t) ?? 0) + n);
     }
     const portfolioBondTickers = new Set([...nominalByTicker.keys()]);
     const rows = bondEvents
-      .filter((ev) => portfolioBondTickers.has(ev.asset.toUpperCase()))
+      .filter((ev) => portfolioBondTickers.has(normalizeBondTicker(ev.asset)))
       .map((ev) => {
-        const nominal = nominalByTicker.get(ev.asset.toUpperCase()) ?? 0;
+        const nominal = nominalByTicker.get(normalizeBondTicker(ev.asset)) ?? 0;
         const intereses = ((ev.couponPer100 ?? 0) / 100) * nominal;
         const amortizacion = ((ev.amortizationPer100 ?? 0) / 100) * nominal;
         return { ev, intereses, amortizacion };
@@ -201,6 +254,31 @@ export default function GrupoDetailPage() {
     };
   }, [positions, bondEvents]);
 
+  const bondFlowDebug = useMemo(() => {
+    const bondPositions = positions.filter(
+      (p) => p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra'
+    );
+    const portfolioTickers = [...new Set(bondPositions.map((p) => normalizeBondTicker(p.ticker)).filter(Boolean))];
+    const calendarTickers = new Set(bondEvents.map((ev) => normalizeBondTicker(ev.asset)).filter(Boolean));
+    const missingTickers = portfolioTickers.filter((t) => !calendarTickers.has(t));
+    const ytmCount = bondPositions.filter((p) => {
+      const m = bondMetricsByRow.get(p.source_row);
+      return m?.ytmAnnualEffective != null && Number.isFinite(m.ytmAnnualEffective);
+    }).length;
+    const durationCount = bondPositions.filter((p) => {
+      const m = bondMetricsByRow.get(p.source_row);
+      return m?.modifiedDuration != null && Number.isFinite(m.modifiedDuration);
+    }).length;
+    return {
+      portfolioTickers: portfolioTickers.length,
+      calendarTickers: calendarTickers.size,
+      missingTickers,
+      ytmCount,
+      durationCount,
+      totalBondRows: bondPositions.length,
+    };
+  }, [positions, bondEvents, bondMetricsByRow]);
+
   const flowTotalsByCurrency = useMemo(() => {
     const totals = new Map<string, { intereses: number; amortizacion: number }>();
     for (const r of mappedBondFlows.rows) {
@@ -211,6 +289,16 @@ export default function GrupoDetailPage() {
       totals.set(c, prev);
     }
     return [...totals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [mappedBondFlows]);
+
+  const bondCurrentValueUsd = useMemo(() => {
+    return positions
+      .filter((p) => p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra')
+      .reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+  }, [positions]);
+
+  const bondFutureValueUsd = useMemo(() => {
+    return mappedBondFlows.rows.reduce((s, r) => s + r.intereses + r.amortizacion, 0);
   }, [mappedBondFlows]);
 
   const sortedPositions = useMemo(() => {
@@ -315,6 +403,18 @@ export default function GrupoDetailPage() {
             <p className="font-mono text-lg">
               {bondPortfolioAgg.covered}/{bondPortfolioAgg.totalBondRows}
             </p>
+            <div className="mt-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="font-mono">
+                Debug · tickers cartera: {bondFlowDebug.portfolioTickers} · tickers calendario: {bondFlowDebug.calendarTickers}
+                {' '}· TIR ok: {bondFlowDebug.ytmCount}/{bondFlowDebug.totalBondRows} · Duration ok: {bondFlowDebug.durationCount}/{bondFlowDebug.totalBondRows}
+              </p>
+              {bondFlowDebug.missingTickers.length > 0 && (
+                <p className="mt-1 font-mono">
+                  Sin match en calendario: {bondFlowDebug.missingTickers.slice(0, 12).join(', ')}
+                  {bondFlowDebug.missingTickers.length > 12 ? ' ...' : ''}
+                </p>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -455,36 +555,66 @@ export default function GrupoDetailPage() {
                 Tabla de flujo
               </label>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!flowPdfSections.monthlyByBond && !flowPdfSections.annualDualAxis && !flowPdfSections.flowTable}
-              onClick={() =>
-                exportFlowReportPdf({
-                  title: `Flujo de bonos — ${nombre}`,
-                  rows: mappedBondFlows.rows.map((r) => ({
-                    ticker: r.ev.asset,
-                    date: fmtIsoDate(r.ev.date),
-                    currency: r.ev.currency,
-                    intereses: r.intereses,
-                    amortizacion: r.amortizacion,
-                  })),
-                  totalsByCurrency: flowTotalsByCurrency,
-                  portfolioMetrics: {
-                    ytm: bondPortfolioAgg.overall.ytm,
-                    duration: bondPortfolioAgg.overall.modDuration,
-                    arsYtm: bondPortfolioAgg.ars.ytm,
-                    arsDuration: bondPortfolioAgg.ars.modDuration,
-                    usdYtm: bondPortfolioAgg.usd.ytm,
-                    usdDuration: bondPortfolioAgg.usd.modDuration,
-                  },
-                  sections: flowPdfSections,
-                })
-              }
-            >
-              Exportar flujo PDF
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!flowPdfSections.monthlyByBond && !flowPdfSections.annualDualAxis && !flowPdfSections.flowTable}
+                onClick={() =>
+                  exportFlowReportPdf({
+                    title: `Flujo de bonos — ${nombre}`,
+                    rows: mappedBondFlows.rows.map((r) => ({
+                      ticker: r.ev.asset,
+                      date: fmtIsoDate(r.ev.date),
+                      currency: r.ev.currency,
+                      intereses: r.intereses,
+                      amortizacion: r.amortizacion,
+                    })),
+                    totalsByCurrency: flowTotalsByCurrency,
+                    portfolioMetrics: {
+                      ytm: bondPortfolioAgg.overall.ytm,
+                      duration: bondPortfolioAgg.overall.modDuration,
+                      arsYtm: bondPortfolioAgg.ars.ytm,
+                      arsDuration: bondPortfolioAgg.ars.modDuration,
+                      usdYtm: bondPortfolioAgg.usd.ytm,
+                      usdDuration: bondPortfolioAgg.usd.modDuration,
+                    },
+                    sections: flowPdfSections,
+                  })
+                }
+              >
+                Exportar flujo PDF
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  exportExecutiveFlowReportPdf({
+                    portfolioId: grupoId,
+                    clientName: nombre,
+                    rows: mappedBondFlows.rows.map((r) => ({
+                      ticker: r.ev.asset,
+                      date: fmtIsoDate(r.ev.date),
+                      currency: r.ev.currency,
+                      intereses: r.intereses,
+                      amortizacion: r.amortizacion,
+                    })),
+                    tirValue: executivePortfolioMetrics.ytm,
+                    durationValue: executivePortfolioMetrics.duration,
+                    arsTirValue: bondPortfolioAgg.ars.ytm,
+                    arsDurationValue: bondPortfolioAgg.ars.modDuration,
+                    usdTirValue: bondPortfolioAgg.usd.ytm,
+                    usdDurationValue: bondPortfolioAgg.usd.modDuration,
+                    currentValueUsd: bondCurrentValueUsd,
+                    futureValueUsd: bondFutureValueUsd,
+                  })
+                }
+              >
+                Exportar PDF ejecutivo
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

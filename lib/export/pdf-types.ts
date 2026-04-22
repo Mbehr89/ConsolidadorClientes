@@ -26,6 +26,8 @@ export interface PdfOptions {
   filename?: string;
   /** Data URL o URL de imagen (logo) */
   logoBase64?: string | null;
+  /** Data URL o URL para marca de agua */
+  watermarkBase64?: string | null;
   brandColors?: {
     primary?: string;
     rowAlt?: string;
@@ -38,13 +40,14 @@ export interface PdfOptions {
 
 export interface PdfOptionsResolved {
   logoBase64: string | null;
+  watermarkBase64: string | null;
   brandColors: { primary: string; rowAlt: string };
   disclaimerText: string;
   advisorSignature: string;
 }
 
-export const DEFAULT_BRAND_PRIMARY = '#1e3a5f';
-export const DEFAULT_BRAND_ROW_ALT = '#f5f5f5';
+export const DEFAULT_BRAND_PRIMARY = '#1b3b5a';
+export const DEFAULT_BRAND_ROW_ALT = '#eef3f8';
 
 export function brokerOrder(code: string): number {
   const order = ['MS', 'NETX360', 'GMA', 'IEB'] as const;

@@ -160,6 +160,7 @@ function resolvePdfOptions(positions: Position[], options?: PdfOptions): PdfOpti
 
   return {
     logoBase64: options?.logoBase64 ?? null,
+    watermarkBase64: options?.watermarkBase64 ?? null,
     brandColors: {
       primary: options?.brandColors?.primary ?? DEFAULT_BRAND_PRIMARY,
       rowAlt: options?.brandColors?.rowAlt ?? DEFAULT_BRAND_ROW_ALT,
@@ -167,6 +168,22 @@ function resolvePdfOptions(positions: Position[], options?: PdfOptions): PdfOpti
     disclaimerText: disclaimer,
     advisorSignature: options?.advisorSignature ?? '',
   };
+}
+
+async function fetchAsDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result ?? ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 export async function exportToPdf(
@@ -178,6 +195,12 @@ export async function exportToPdf(
 
   const data = buildPdfData(positions, clienteId);
   const resolved = resolvePdfOptions(positions, options);
+  if (!resolved.logoBase64) {
+    resolved.logoBase64 = await fetchAsDataUrl('/behr-advisory-header.png');
+  }
+  if (!resolved.watermarkBase64) {
+    resolved.watermarkBase64 = await fetchAsDataUrl('/behr-advisory-logo.png');
+  }
 
   const [{ pdf }, { TenenciasPdfDocument }] = await Promise.all([
     import('@react-pdf/renderer'),

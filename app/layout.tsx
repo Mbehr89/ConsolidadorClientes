@@ -1,4 +1,4 @@
-﻿import type { Metadata, Viewport } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { DM_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/components/auth-provider';
@@ -18,15 +18,20 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Consolidador de Tenencias',
-  description: 'Consolidacion multi-broker de posiciones de clientes',
+  title: 'BEHR ADVISORY',
+  description: 'Portfolio intelligence y consolidacion multi-broker de posiciones de clientes',
+  icons: {
+    icon: '/icon.png',
+    apple: '/apple-icon.png',
+    shortcut: '/icon.png',
+  },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#f4f6f9',
+  themeColor: '#1b3b5a',
 };
 
 export default function RootLayout({

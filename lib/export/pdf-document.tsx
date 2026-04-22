@@ -102,6 +102,31 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
   },
+  watermark: {
+    position: 'absolute',
+    top: '36%',
+    left: '10%',
+    width: '80%',
+    opacity: 0.06,
+  },
+  pageBrandHeader: {
+    position: 'absolute',
+    top: 18,
+    left: 56.7,
+    right: 56.7,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  pageBrandLogo: {
+    maxHeight: 34,
+    maxWidth: 360,
+    objectFit: 'contain',
+  },
+  pageBrandText: {
+    fontSize: 8,
+    color: '#556274',
+  },
 });
 
 function fmtUsd(n: number): string {
@@ -130,11 +155,24 @@ export function TenenciasPdfDocument({ data, options }: Props) {
   const primary = options.brandColors.primary;
   const rowAlt = options.brandColors.rowAlt;
   const headerStyle = [styles.tableHeader, { backgroundColor: primary }];
+  const watermarkSource = options.watermarkBase64 ?? options.logoBase64;
+  const Watermark = watermarkSource ? (
+    // eslint-disable-next-line jsx-a11y/alt-text
+    <Image src={watermarkSource} style={styles.watermark} fixed />
+  ) : null;
+  const BrandHeader = options.logoBase64 ? (
+    <View style={styles.pageBrandHeader} fixed>
+      {/* eslint-disable-next-line jsx-a11y/alt-text */}
+      <Image src={options.logoBase64} style={styles.pageBrandLogo} />
+      <Text style={styles.pageBrandText}>BEHR ADVISORY</Text>
+    </View>
+  ) : null;
 
   return (
     <Document>
       {/* Portada */}
       <Page size="A4" style={styles.page}>
+        {Watermark}
         {options.logoBase64 ? (
           <View style={{ alignItems: 'center', marginBottom: 24 }}>
             {/* eslint-disable-next-line jsx-a11y/alt-text */}
@@ -157,6 +195,8 @@ export function TenenciasPdfDocument({ data, options }: Props) {
 
       {/* Resumen */}
       <Page size="A4" style={styles.page}>
+        {Watermark}
+        {BrandHeader}
         <Text style={[styles.sectionTitle, { color: primary }]}>Resumen</Text>
         <Text style={[styles.aumBig, { color: primary }]}>{fmtUsd(data.totalAum)}</Text>
         <Text style={{ marginBottom: 8, fontSize: 9, color: '#555' }}>AUM total estimado en USD</Text>
@@ -203,6 +243,8 @@ export function TenenciasPdfDocument({ data, options }: Props) {
 
       {/* Top posiciones */}
       <Page size="A4" style={styles.page}>
+        {Watermark}
+        {BrandHeader}
         <Text style={[styles.sectionTitle, { color: primary }]}>
           Detalle — Top 20 posiciones (sin efectivo)
         </Text>
@@ -235,6 +277,8 @@ export function TenenciasPdfDocument({ data, options }: Props) {
 
       {/* Breakdown visual */}
       <Page size="A4" style={styles.page}>
+        {Watermark}
+        {BrandHeader}
         <Text style={[styles.sectionTitle, { color: primary }]}>Distribución</Text>
 
         <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', marginBottom: 4, color: primary }}>
@@ -293,6 +337,8 @@ export function TenenciasPdfDocument({ data, options }: Props) {
 
       {/* Disclaimer */}
       <Page size="A4" style={styles.page}>
+        {Watermark}
+        {BrandHeader}
         <Text style={[styles.sectionTitle, { color: primary }]}>Aviso legal</Text>
         <Text style={styles.disclaimer}>{options.disclaimerText}</Text>
         {options.advisorSignature ? <Text style={styles.signature}>{options.advisorSignature}</Text> : null}

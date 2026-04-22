@@ -14,6 +14,260 @@ export interface FlowReportSections {
   flowTable: boolean;
 }
 
+
+export function exportExecutiveFlowReportPdf(args: {
+  portfolioId: string;
+  clientName: string;
+  rows: FlowReportRow[];
+  tirValue?: number | null;
+  durationValue?: number | null;
+  arsTirValue?: number | null;
+  arsDurationValue?: number | null;
+  usdTirValue?: number | null;
+  usdDurationValue?: number | null;
+  currentValueUsd?: number;
+  futureValueUsd?: number;
+}) {
+  const {
+    portfolioId,
+    clientName,
+    rows,
+    tirValue,
+    durationValue,
+    arsTirValue,
+    arsDurationValue,
+    usdTirValue,
+    usdDurationValue,
+    currentValueUsd,
+    futureValueUsd,
+  } = args;
+  const fmtMoney = (n: number) =>
+    n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtPctMaybe = (v: number | null | undefined) =>
+    v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(2)}%`;
+  const fmtNumMaybe = (v: number | null | undefined) =>
+    v == null || !Number.isFinite(v) ? '—' : v.toFixed(2);
+  const generatedAt = new Date().toLocaleString('es-AR');
+
+  const monthlyTotals = new Map<string, number>();
+  for (const r of rows) {
+    const month = r.date.slice(0, 7);
+    monthlyTotals.set(month, (monthlyTotals.get(month) ?? 0) + r.intereses + r.amortizacion);
+  }
+  const monthlyRows = [...monthlyTotals.entries()]
+    .map(([month, total]) => ({ month, total }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+  const consolidatedPairs: Array<{ left?: { month: string; total: number }; right?: { month: string; total: number } }> = [];
+  for (let i = 0; i < monthlyRows.length; i += 2) {
+    consolidatedPairs.push({ left: monthlyRows[i], right: monthlyRows[i + 1] });
+  }
+  const consolidatedRowsHtml = consolidatedPairs
+    .map(
+      ({ left, right }) => `<tr>
+        <td>${left?.month ?? ''}</td>
+        <td class="num">${left ? fmtMoney(left.total) : ''}</td>
+        <td>${right?.month ?? ''}</td>
+        <td class="num">${right ? fmtMoney(right.total) : ''}</td>
+      </tr>`
+    )
+    .join('');
+
+  const byTicker = new Map<string, FlowReportRow[]>();
+  for (const r of rows) {
+    const t = (r.ticker || 'N/A').toUpperCase();
+    const list = byTicker.get(t) ?? [];
+    list.push(r);
+    byTicker.set(t, list);
+  }
+  const perBondSectionsHtml = [...byTicker.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([ticker, list]) => {
+      const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+      const rowsHtml = sorted
+        .map((r) => {
+          const total = r.intereses + r.amortizacion;
+          return `<tr>
+            <td>${r.date}</td>
+            <td>${r.currency}</td>
+            <td class="num">${fmtMoney(r.intereses)}</td>
+            <td class="num">${fmtMoney(r.amortizacion)}</td>
+            <td class="num">${fmtMoney(total)}</td>
+          </tr>`;
+        })
+        .join('');
+      const totalBond = sorted.reduce((s, r) => s + r.intereses + r.amortizacion, 0);
+      return `<section class="bond-section">
+        <h3>${ticker}</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Moneda</th>
+              <th class="num">Interés</th>
+              <th class="num">Amortización</th>
+              <th class="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4">Total ${ticker}</td>
+              <td class="num">${fmtMoney(totalBond)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </section>`;
+    })
+    .join('');
+
+  const totalProjected = rows.reduce((s, r) => s + r.intereses + r.amortizacion, 0);
+  const currentValue = Number.isFinite(currentValueUsd) ? currentValueUsd ?? 0 : 0;
+  const futureValue = Number.isFinite(futureValueUsd) ? futureValueUsd ?? 0 : totalProjected;
+  const docTitle = `Reporte Detallado de Flujo - ${portfolioId}`;
+  const origin = window.location.origin;
+  const headerLogoUrl = `${origin}/behr-advisory-header.png`;
+  const watermarkLogoUrl = `${origin}/behr-advisory-logo.png`;
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${docTitle}</title>
+  <style>
+    :root { --primary:#1A2E44; --accent:#27AE60; --grayRow:#F4F7F6; --deepGray:#4A4A4A; --line:#d9e0e6; --bg:#ffffff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Noto Sans","Segoe UI",Arial,sans-serif; color: var(--deepGray); background: #fff; }
+    .page { max-width: 960px; margin: 0 auto; padding: 28px 24px 24px; }
+    .watermark { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; pointer-events:none; opacity:0.06; z-index:0; }
+    .watermark img { width:min(64vw,560px); height:auto; }
+    .content { position: relative; z-index: 1; }
+    .running-head { display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--deepGray); padding-bottom:8px; border-bottom:1px solid var(--line); }
+    .brand-head { margin-top:10px; }
+    .brand-head img { height:68px; width:auto; }
+    .title { margin-top:18px; }
+    .title h1 { margin:0; color:var(--primary); font-size:34px; line-height:1.1; }
+    .subtitle { margin-top:6px; font-size:18px; color:var(--deepGray); }
+    .kpis { margin-top:20px; display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; }
+    .kpi { border-radius:10px; border:1px solid var(--line); padding:10px; min-height:95px; display:flex; flex-direction:column; justify-content:center; }
+    .kpi.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+    .kpi.accent { background:var(--accent); color:#fff; border-color:var(--accent); }
+    .kpi .label { font-size:12px; font-weight:700; letter-spacing:.3px; text-align:center; }
+    .kpi .value { margin-top:8px; font-size:28px; font-weight:700; text-align:center; }
+    .split-metrics { margin-top:10px; display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+    .split-card { border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:#fafbfd; }
+    .split-title { font-size:11px; font-weight:700; color:var(--primary); margin-bottom:4px; }
+    .split-row { font-size:12px; color:var(--deepGray); display:flex; justify-content:space-between; gap:8px; }
+    h2 { margin:26px 0 4px; color:var(--primary); font-size:26px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+    .hint { margin:0 0 10px; font-style:italic; font-size:13px; color:#6b7280; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    thead th { text-align:left; padding:8px; border-bottom:2px solid #9aa8b5; color:var(--primary); }
+    tbody td { padding:7px 8px; border-bottom:1px solid #eef2f6; }
+    tbody tr:nth-child(even) { background:var(--grayRow); }
+    tfoot td { padding:8px; border-top:2px solid #9aa8b5; font-weight:700; }
+    .num { text-align:right; font-variant-numeric: tabular-nums; }
+    .bond-section { margin:16px 0 20px; page-break-inside: avoid; }
+    .bond-section h3 { color:var(--primary); margin:0 0 6px; font-size:18px; }
+    .foot-note { margin-top:18px; text-align:center; font-size:11px; color:#6b7280; font-style:italic; }
+    @media print {
+      @page { size: A4; margin: 16mm 12mm; }
+      .page { padding: 0; max-width: none; }
+      thead { display: table-header-group; }
+      tr { page-break-inside: avoid; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="watermark"><img src="${watermarkLogoUrl}" alt="" /></div>
+    <div class="content">
+    <div class="running-head">
+      <div>Reporte de Inversiones: ${portfolioId}</div>
+      <div>Generado el ${generatedAt}</div>
+    </div>
+    <div class="brand-head"><img src="${headerLogoUrl}" alt="BEHR ADVISORY" /></div>
+
+    <div class="title">
+      <h1>Reporte Detallado de Flujo</h1>
+      <div class="subtitle">Portfolio ID: ${portfolioId} | ${clientName}</div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi accent">
+        <div class="label">VALOR ACTUAL</div>
+        <div class="value">${fmtMoney(currentValue)}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">VALOR FUTURO</div>
+        <div class="value">${fmtMoney(futureValue)}</div>
+      </div>
+    </div>
+    <div class="split-metrics">
+      <div class="split-card">
+        <div class="split-title">Bonos ARS</div>
+        <div class="split-row"><span>TIR:</span><strong>${fmtPctMaybe(arsTirValue)}</strong></div>
+        <div class="split-row"><span>Duration:</span><strong>${fmtNumMaybe(arsDurationValue)}</strong></div>
+      </div>
+      <div class="split-card">
+        <div class="split-title">Bonos USD</div>
+        <div class="split-row"><span>TIR:</span><strong>${fmtPctMaybe(usdTirValue)}</strong></div>
+        <div class="split-row"><span>Duration:</span><strong>${fmtNumMaybe(usdDurationValue)}</strong></div>
+      </div>
+    </div>
+
+    <h2>Cronograma Consolidado</h2>
+    <p class="hint">Resumen de ingresos mensuales proyectados para el total de la cartera.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Período</th>
+          <th class="num">Cobro (USD)</th>
+          <th>Período</th>
+          <th class="num">Cobro (USD)</th>
+        </tr>
+      </thead>
+      <tbody>${consolidatedRowsHtml || '<tr><td colspan="4">Sin datos de flujo</td></tr>'}</tbody>
+    </table>
+
+    <h2>Detalle de Flujo por Activo</h2>
+    <p class="hint">Desglose individual de cada instrumento financiero contenido en el portfolio.</p>
+    ${perBondSectionsHtml || '<p>Sin datos de flujo por activo.</p>'}
+
+    <div class="foot-note">
+      Este documento es un reporte automático generado por el sistema de gestión de activos.<br />
+      La información presentada se basa en los cronogramas oficiales de pago a la fecha de generación.
+    </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const w = window.open('about:blank', '_blank', 'width=1200,height=900');
+  if (!w) {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reporte_detallado_flujo_${portfolioId.replace(/[^\w.-]+/g, '_')}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  const triggerPrint = () => {
+    try {
+      w.focus();
+      w.print();
+    } catch {
+      // no-op
+    }
+  };
+  if (w.document.readyState === 'complete') setTimeout(triggerPrint, 250);
+  else w.addEventListener('load', () => setTimeout(triggerPrint, 250), { once: true });
+}
+
 export function exportFlowReportPdf(args: {
   title: string;
   rows: FlowReportRow[];
@@ -39,6 +293,9 @@ export function exportFlowReportPdf(args: {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
   const fileName = `${safeName || 'flujo_bonos'}.html`;
+  const origin = window.location.origin;
+  const headerLogoUrl = `${origin}/behr-advisory-header.png`;
+  const watermarkLogoUrl = `${origin}/behr-advisory-logo.png`;
 
   const w = window.open('about:blank', '_blank', 'width=1200,height=900');
   if (!w) {
@@ -256,7 +513,10 @@ export function exportFlowReportPdf(args: {
     v == null || !Number.isFinite(v) ? '—' : v.toFixed(2);
   const compactHeader = `
     <div class="compact-head">
-      <div class="compact-title">${title}</div>
+      <div class="compact-title">
+        <img src="${headerLogoUrl}" alt="BEHR ADVISORY" class="compact-logo" />
+        <span>${title}</span>
+      </div>
       ${
         portfolioMetrics
           ? `<div class="compact-metrics">
@@ -329,7 +589,9 @@ export function exportFlowReportPdf(args: {
     :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --bg-soft:#f8fafc; --bg-page:#fffaf0; --brand:#1d4ed8; --i:#2563eb; --a:#16a34a; }
     * { box-sizing: border-box; }
     body { font-family: "Inter","Segoe UI",Arial,sans-serif; margin:0; color:var(--ink); background:var(--bg-page); }
-    .page { max-width: 1080px; margin: 0 auto; padding: 28px 30px 34px; background: var(--bg-page); min-height: 100vh; }
+    .page { max-width: 1080px; margin: 0 auto; padding: 28px 30px 34px; background: var(--bg-page); min-height: 100vh; position:relative; }
+    .watermark { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; pointer-events:none; opacity:0.055; z-index:0; }
+    .watermark img { width:min(64vw,560px); height:auto; }
     .header { padding: 18px 20px; border:1px solid var(--line); border-radius:14px; background:linear-gradient(180deg,#f8fbff,#f2f7ff); margin-bottom:14px; }
     h1 { font-size:24px; margin:0 0 8px; color:var(--brand); }
     h2 { font-size:16px; margin:20px 0 10px; color:#0b3b9a; }
@@ -347,7 +609,8 @@ export function exportFlowReportPdf(args: {
     .legend-chip { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); background:white; border-radius:999px; padding:2px 8px; font-size:10px; font-family:Consolas,Menlo,monospace; }
     .legend-swatch { width:8px; height:8px; border-radius:999px; display:inline-block; }
     .compact-head { border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-bottom: 10px; background: #fff; }
-    .compact-title { font-size: 12px; color:#1e3a8a; font-weight: 600; margin-bottom: 4px; }
+    .compact-title { font-size: 12px; color:#1e3a8a; font-weight: 600; margin-bottom: 4px; display:flex; align-items:center; gap:8px; }
+    .compact-logo { height: 34px; width:auto; }
     .compact-metrics { display:flex; flex-wrap:wrap; gap:10px; font-size:11px; color:#334155; font-family:Consolas,Menlo,monospace; }
     table { width:100%; border-collapse:collapse; font-size:12px; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
     thead th { background:#eff6ff; color:#1e3a8a; border-bottom:1px solid #dbeafe; font-weight:600; padding:8px; text-align:left; }
@@ -359,7 +622,7 @@ export function exportFlowReportPdf(args: {
     .bar-svg-wrap { height: 12px; width: 100%; }
     .bar-val { text-align:right; font-family:Consolas,Menlo,monospace; font-size:11px; }
     .footer { margin-top:18px; font-size:11px; color:var(--muted); text-align:right; }
-    .sheet { page-break-after: always; }
+    .sheet { page-break-after: always; position:relative; z-index:1; }
     .sheet:last-of-type { page-break-after: auto; }
     .table-section { margin-top: 0; }
     .table-section table { page-break-inside: auto; }
@@ -382,6 +645,7 @@ export function exportFlowReportPdf(args: {
 </head>
 <body>
   <div class="page">
+    <div class="watermark"><img src="${watermarkLogoUrl}" alt="" /></div>
     ${monthlySectionHtml}
     ${annualSectionHtml}
     ${tableSectionHtml}

@@ -1,4 +1,5 @@
 import type { BondPaymentEvent, BondYieldMetrics } from './types';
+import { normalizeBondTicker } from './ticker-normalize';
 
 const MS_PER_DAY = 86400000;
 const TOL_REL = 1e-9;
@@ -115,12 +116,13 @@ export function buildFutureFlows(
   nominal: number,
   usdArsFxRate: number
 ): { t: number; amt: number }[] {
-  const key = ticker.trim().toUpperCase();
+  const key = normalizeBondTicker(ticker);
   const v0 = utcMidnight(valuationDate).getTime();
   const out: { t: number; amt: number }[] = [];
 
   for (const e of events) {
-    if (e.asset !== key) continue;
+    const asset = normalizeBondTicker(e.asset);
+    if (asset !== key) continue;
     const ed = utcMidnight(e.date).getTime();
     if (ed < v0) continue;
     const t = yearsAct365(valuationDate, e.date);
