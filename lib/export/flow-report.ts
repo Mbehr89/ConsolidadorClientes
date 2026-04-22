@@ -181,14 +181,14 @@ export function exportExecutiveFlowReportPdf(args: {
     <div class="watermark"><img src="${watermarkLogoUrl}" alt="" /></div>
     <div class="content">
     <div class="running-head">
-      <div>Reporte de Inversiones: ${portfolioId}</div>
+      <div>Reporte de Inversiones: ${clientName}</div>
       <div>Generado el ${generatedAt}</div>
     </div>
     <div class="brand-head"><img src="${headerLogoUrl}" alt="BEHR ADVISORY" /></div>
 
     <div class="title">
       <h1>Reporte Detallado de Flujo</h1>
-      <div class="subtitle">Portfolio ID: ${portfolioId} | ${clientName}</div>
+      <div class="subtitle">${clientName}</div>
     </div>
 
     <div class="kpis">
