@@ -37,6 +37,7 @@ export default function ClienteDetailPage() {
   const [bondEvents, setBondEvents] = useState<BondPaymentEvent[]>([]);
   const [sortBy, setSortBy] = useState<'valor_usd' | 'pct_portfolio' | 'clase'>('valor_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [cashExpanded, setCashExpanded] = useState(false);
   const [flowPdfSections, setFlowPdfSections] = useState({
     monthlyByBond: true,
     annualDualAxis: true,
@@ -307,8 +308,18 @@ export default function ClienteDetailPage() {
     return mappedBondFlows.rows.reduce((s, r) => s + r.intereses + r.amortizacion, 0);
   }, [mappedBondFlows]);
 
-  const sortedPositions = useMemo(() => {
-    const list = [...positions];
+  const sortedCashPositions = useMemo(() => {
+    const list = positions.filter((p) => isCashLike(p));
+    list.sort((a, b) => {
+      const cashCmp = getCashBucketLabel(a).localeCompare(getCashBucketLabel(b));
+      if (cashCmp !== 0) return cashCmp;
+      return (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0);
+    });
+    return list;
+  }, [positions]);
+
+  const sortedNonCashPositions = useMemo(() => {
+    const list = positions.filter((p) => !isCashLike(p));
     list.sort((a, b) => {
       let cmp = 0;
       if (sortBy === 'clase') {
@@ -324,6 +335,13 @@ export default function ClienteDetailPage() {
     });
     return list;
   }, [positions, sortBy, sortDir, totalUsd]);
+
+  const cashTotals = useMemo(() => {
+    const count = sortedCashPositions.length;
+    const usd = sortedCashPositions.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+    const ars = sortedCashPositions.reduce((s, p) => s + getArsValuationNumber(p), 0);
+    return { count, usd, ars };
+  }, [sortedCashPositions]);
 
   if (!state.hasParsed) {
     return (
@@ -484,37 +502,100 @@ export default function ClienteDetailPage() {
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Cuenta</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Ticker</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Clase</th>
-                  <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Forma Legal</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Cant.</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Precio ARS</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Precio USD</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valor USD</th>
+                  <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valor ARS</th>
+                  <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Forma Legal</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">% Portfolio</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Moneda</th>
                   <th className="p-2 text-xs font-medium text-muted-foreground uppercase">⚠</th>
-                  <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valuación ARS</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">TIR</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Dur. mod.</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedPositions.map((p, i) => (
-                  <tr key={i} className="border-b border-border/50 hover:bg-muted/50">
+                {cashTotals.count > 0 && (
+                  <tr className="border-b border-border/70 bg-muted/20">
+                    <td className="p-2">
+                      <Badge variant="outline" className="font-semibold">CASH</Badge>
+                    </td>
+                    <td className="p-2 text-xs text-muted-foreground">—</td>
+                    <td className="p-2">
+                      <button
+                        type="button"
+                        className="font-mono text-sm text-primary hover:underline"
+                        onClick={() => setCashExpanded((v) => !v)}
+                      >
+                        {cashExpanded ? '▼' : '▶'} CASH agregado ({cashTotals.count} posiciones)
+                      </button>
+                    </td>
+                    <td className="p-2">
+                      <Badge variant="secondary" className="text-xs">cash</Badge>
+                    </td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono font-medium">{formatCurrency(cashTotals.usd)}</td>
+                    <td className="p-2 text-right font-mono">
+                      {cashTotals.ars.toLocaleString('es-AR', {
+                        style: 'currency',
+                        currency: 'ARS',
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="p-2 text-xs text-muted-foreground">—</td>
+                    <td className="p-2 text-right text-muted-foreground">
+                      {totalUsd > 0 ? formatPct((cashTotals.usd / totalUsd) * 100) : '—'}
+                    </td>
+                    <td className="p-2 text-xs">Mixto</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                  </tr>
+                )}
+                {cashExpanded && sortedCashPositions.map((p) => (
+                  <tr key={`cash-${p.source_row}`} className="border-b border-border/40 bg-muted/10 hover:bg-muted/40">
                     <td className="p-2"><Badge variant="outline" className={brokerColorClass(p.broker)}>{p.broker}</Badge></td>
                     <td className="p-2 text-xs font-mono text-muted-foreground">{p.cuenta}</td>
-                    <td className="p-2 font-mono">{p.ticker ?? '—'}</td>
+                    <td className="p-2 font-mono">
+                      CASH · <span className="text-xs text-muted-foreground">{getCashBucketLabel(p)}</span>
+                    </td>
                     <td className="p-2"><Badge variant="secondary" className="text-xs">{p.clase_activo}</Badge></td>
-                    <td className="p-2 text-xs text-muted-foreground">{p.forma_legal ?? '—'}</td>
                     <td className="p-2 text-right font-mono">{p.cantidad.toLocaleString()}</td>
                     <td className="p-2 text-right font-mono">{formatArsPrice(p)}</td>
                     <td className="p-2 text-right font-mono">{formatUsdPrice(p)}</td>
                     <td className="p-2 text-right font-mono font-medium">{formatCurrency(p.valor_mercado_usd ?? 0)}</td>
+                    <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
+                    <td className="p-2 text-xs text-muted-foreground">{p.forma_legal ?? '—'}</td>
                     <td className="p-2 text-right text-muted-foreground">
                       {totalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / totalUsd) * 100) : '—'}
                     </td>
                     <td className="p-2 text-xs">{p.moneda}{p.moneda_subtipo ? ` (${p.moneda_subtipo})` : ''}</td>
                     <td className="p-2">{p.warnings.length > 0 && <span className="text-amber-500" title={p.warnings.join('\n')}>⚠ {p.warnings.length}</span>}</td>
+                    <td className="p-2 text-right font-mono">{formatYtmPct(bondMetricsByRow.get(p.source_row)?.ytmAnnualEffective)}</td>
+                    <td className="p-2 text-right font-mono">{formatNumberOrDash(bondMetricsByRow.get(p.source_row)?.modifiedDuration)}</td>
+                  </tr>
+                ))}
+                {sortedNonCashPositions.map((p) => (
+                  <tr key={p.source_row} className="border-b border-border/50 hover:bg-muted/50">
+                    <td className="p-2"><Badge variant="outline" className={brokerColorClass(p.broker)}>{p.broker}</Badge></td>
+                    <td className="p-2 text-xs font-mono text-muted-foreground">{p.cuenta}</td>
+                    <td className="p-2 font-mono">{p.ticker ?? '—'}</td>
+                    <td className="p-2"><Badge variant="secondary" className="text-xs">{p.clase_activo}</Badge></td>
+                    <td className="p-2 text-right font-mono">{p.cantidad.toLocaleString()}</td>
+                    <td className="p-2 text-right font-mono">{formatArsPrice(p)}</td>
+                    <td className="p-2 text-right font-mono">{formatUsdPrice(p)}</td>
+                    <td className="p-2 text-right font-mono font-medium">{formatCurrency(p.valor_mercado_usd ?? 0)}</td>
                     <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
+                    <td className="p-2 text-xs text-muted-foreground">{p.forma_legal ?? '—'}</td>
+                    <td className="p-2 text-right text-muted-foreground">
+                      {totalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / totalUsd) * 100) : '—'}
+                    </td>
+                    <td className="p-2 text-xs">{p.moneda}{p.moneda_subtipo ? ` (${p.moneda_subtipo})` : ''}</td>
+                    <td className="p-2">{p.warnings.length > 0 && <span className="text-amber-500" title={p.warnings.join('\n')}>⚠ {p.warnings.length}</span>}</td>
                     <td className="p-2 text-right font-mono">{formatYtmPct(bondMetricsByRow.get(p.source_row)?.ytmAnnualEffective)}</td>
                     <td className="p-2 text-right font-mono">{formatNumberOrDash(bondMetricsByRow.get(p.source_row)?.modifiedDuration)}</td>
                   </tr>
@@ -798,10 +879,21 @@ function formatUsdPrice(p: Position): string {
 }
 
 function formatArsValuation(p: Position): string {
-  let arsValue: number | null = null;
+  const arsValue = getArsValuationNumber(p);
+  if (arsValue == null || !Number.isFinite(arsValue)) return '—';
+  return arsValue.toLocaleString('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function getArsValuationNumber(p: Position): number {
   if (Number.isFinite(p.valor_mercado_local) && p.valor_mercado_local > 0 && p.moneda === 'ARS') {
-    arsValue = p.valor_mercado_local;
-  } else if (
+    return p.valor_mercado_local;
+  }
+  if (
     p.valor_mercado_usd != null &&
     Number.isFinite(p.valor_mercado_usd) &&
     p.valor_mercado_usd > 0 &&
@@ -810,18 +902,44 @@ function formatArsValuation(p: Position): string {
   ) {
     // Usa el FX implícito de la fila para llevar la valuación a ARS.
     const fx = p.valor_mercado_local / p.valor_mercado_usd;
-    arsValue = p.valor_mercado_usd * fx;
-  } else if (p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd) && p.valor_mercado_usd > 0) {
-    // Fallback conservador si no hay valuación local: asumir 1:1.
-    arsValue = p.valor_mercado_usd;
+    return p.valor_mercado_usd * fx;
   }
-  if (arsValue == null || !Number.isFinite(arsValue)) return '—';
-  return arsValue.toLocaleString('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  });
+  if (p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd) && p.valor_mercado_usd > 0) {
+    // Fallback conservador si no hay valuación local: asumir 1:1.
+    return p.valor_mercado_usd;
+  }
+  return 0;
+}
+
+function isCashLike(p: Position): boolean {
+  return p.clase_activo === 'cash' || (p.ticker ?? '').toUpperCase() === 'CASH';
+}
+
+function getCashBucketLabel(p: Position): string {
+  if (!isCashLike(p)) return 'No cash';
+  const sub = (p.moneda_subtipo ?? '').trim().toLowerCase();
+  const desc = (p.descripcion ?? '').toLowerCase();
+
+  // IEB / unificado: MM explícito por moneda (antes de ARS/USD genérico).
+  if (sub === 'money_market_ars') return 'Money market ARS';
+  if (sub === 'money_market_usd') return 'Money market USD';
+  if (sub === 'ars') return 'ARS';
+  if (sub === 'usd') return 'USD';
+  if (sub === '7000' || /\b7000\b|dolar\s*7000|especie\s*7000/.test(desc)) return 'Especie 7000';
+  if (sub === '10000' || /\b10000\b|dolar\s*10000|especie\s*10000/.test(desc)) return 'Especie 10000';
+  if (sub === 'cable' || /cable|d[oó]lar\s*cable/.test(desc)) return 'Cable';
+  if (sub === 'mep' || /\bmep\b|d[oó]lar\s*mep/.test(desc)) return 'USD MEP';
+  if (sub === 'money_market' || sub === 'money market' || /money\s*market|\bmmf\b/.test(desc)) {
+    if (p.moneda === 'ARS') return 'Money market ARS';
+    if (p.moneda === 'USD') return 'Money market USD';
+    return 'Money market';
+  }
+  if (sub === 'usd_cash' || sub === 'usd cash') return 'USD cash';
+  if (sub === 'eur' || p.moneda === 'EUR') return 'EUR';
+  if (p.moneda === 'ARS' && (!sub || sub === 'ars')) return 'ARS';
+  if (p.moneda === 'USD') return 'USD';
+  if (p.moneda === 'ARS') return 'ARS';
+  return p.moneda || 'Cash';
 }
 
 function formatYtmPct(v: number | null | undefined): string {

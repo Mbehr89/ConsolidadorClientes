@@ -33,8 +33,18 @@ const TIPO_ESPECIE_MAP: Record<number, Position['clase_activo']> = {
   6: 'letra',
 };
 
-/** Tickers especiales de cash/moneda */
-const CASH_TICKERS = new Set(['Pesos', 'USD', 'DOLAR EXT.', 'DOLARUSA', '-']);
+/** Tickers especiales de cash/moneda (columna F). */
+const IEB_CASH_TICKER_MAP: Record<string, string | null> = {
+  PESOS: 'ARS',
+  USD: 'USD',
+  'DOLAR EXT': 'CABLE',
+  DOLARUSA: '7000',
+  'MM PESOS': 'money_market_ars',
+  'MM DOLARES': 'money_market_usd',
+  'MM DOLAR': 'money_market_usd',
+  'MM USD': 'money_market_usd',
+};
+const CASH_TICKERS = new Set([...Object.keys(IEB_CASH_TICKER_MAP), '-']);
 
 /** TipoCambio especiales que NO son tasa FX real */
 const TC_NON_FX = new Set([1, 2]);
@@ -306,7 +316,7 @@ function parseRow(
   const clienteId = generateClienteIdSync(normalizado, aliasMap);
 
   // ─── Pais emisor ───
-  const effectiveTicker = ticker && !CASH_TICKERS.has(ticker) ? ticker : null;
+  const effectiveTicker = ticker && !CASH_TICKERS.has(normalizeIebCashToken(ticker)) ? ticker : null;
   let paisEmisor: string | null = null;
   if (effectiveTicker && opts.tickers_metadata?.[effectiveTicker]) {
     paisEmisor = opts.tickers_metadata[effectiveTicker]!.pais;
@@ -413,13 +423,16 @@ function classifyAsset(
   opts: ParseOptions
 ): IebClassification {
   const warnings: string[] = [];
+  const tickerNorm = normalizeIebCashToken(ticker);
+  const descripcionNorm = normalizeIebCashToken(descripcion);
 
-  // Cash tickers override
-  if (CASH_TICKERS.has(ticker)) {
-    let subtipo: string | null = null;
-    if (ticker === 'Pesos') subtipo = null;
-    else if (ticker === 'USD' || ticker === 'DOLAR EXT.') subtipo = 'MEP';
-    else if (ticker === 'DOLARUSA') subtipo = '7000';
+  // Cash normalization: siempre priorizar columna F (Ticker) en IEB.
+  // Solo si F viene vacío/"-" usar fallback por descripción.
+  const cashSubtipoFromTicker = IEB_CASH_TICKER_MAP[tickerNorm];
+  const shouldFallbackToDescripcion = tickerNorm === '' || tickerNorm === '-';
+  const cashSubtipoFromDescripcion = shouldFallbackToDescripcion ? IEB_CASH_TICKER_MAP[descripcionNorm] : undefined;
+  if (tickerNorm in IEB_CASH_TICKER_MAP || cashSubtipoFromDescripcion != null) {
+    const subtipo = tickerNorm in IEB_CASH_TICKER_MAP ? cashSubtipoFromTicker ?? null : cashSubtipoFromDescripcion ?? null;
     return { clase: 'cash', formaLegal: null, monedaSubtipo: subtipo, warnings };
   }
 
@@ -472,6 +485,16 @@ function classifyAsset(
   }
 
   return { clase: baseClase, formaLegal: null, monedaSubtipo: null, warnings };
+}
+
+function normalizeIebCashToken(value: string): string {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\./g, '')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
 }
 
 // ─── Totalizadora detection ─────────────────────────────

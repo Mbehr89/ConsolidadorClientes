@@ -14,10 +14,9 @@ type CashBucketKey =
   | 'especie_7000'
   | 'especie_10000'
   | 'mep'
-  | 'money_market'
-  | 'usd_cash'
-  | 'eur'
-  | 'usd';
+  | 'money_market_ars'
+  | 'money_market_usd'
+  | 'eur';
 
 /** Buckets fijos para columnas de CASH (orden de visualización). */
 const CASH_BUCKET_DEFS: { key: CashBucketKey; label: string }[] = [
@@ -26,11 +25,21 @@ const CASH_BUCKET_DEFS: { key: CashBucketKey; label: string }[] = [
   { key: 'especie_7000', label: 'Especie 7000' },
   { key: 'especie_10000', label: 'Especie 10000' },
   { key: 'mep', label: 'USD MEP' },
-  { key: 'money_market', label: 'Money market' },
-  { key: 'usd_cash', label: 'USD cash' },
+  { key: 'money_market_ars', label: 'MM ARS' },
+  { key: 'money_market_usd', label: 'MM USD' },
   { key: 'eur', label: 'EUR' },
-  { key: 'usd', label: 'USD (sin clasificar)' },
 ];
+
+const IEB_CASH_TICKER_BUCKET_MAP: Record<string, CashBucketKey> = {
+  PESOS: 'ars',
+  USD: 'mep',
+  'DOLAR EXT': 'cable',
+  DOLARUSA: 'especie_7000',
+  'MM PESOS': 'money_market_ars',
+  'MM DOLARES': 'money_market_usd',
+  'MM DOLAR': 'money_market_usd',
+  'MM USD': 'money_market_usd',
+};
 
 interface ActivoSummary {
   ticker: string;
@@ -45,6 +54,7 @@ interface ActivoSummary {
     cuenta: string;
     cantidad: number;
     valor_usd: number;
+    valor_local: number;
     moneda: string;
     moneda_subtipo: string | null;
     /** Bucket estable para columnas; null si no es cash */
@@ -84,6 +94,7 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
       cuenta: p.cuenta,
       cantidad: p.cantidad,
       valor_usd: p.valor_mercado_usd ?? 0,
+      valor_local: p.valor_mercado_local,
       moneda: p.moneda,
       moneda_subtipo: p.moneda_subtipo,
       cash_bucket: p.clase_activo === 'cash' ? getCashBucketKey(p) : null,
@@ -105,13 +116,27 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
 function getCashBucketKey(p: Position): CashBucketKey {
   const sub = (p.moneda_subtipo ?? '').trim().toLowerCase();
   const desc = (p.descripcion ?? '').toLowerCase();
+  const tickerNorm = normalizeCashToken(p.ticker ?? '');
+  const descNorm = normalizeCashToken(p.descripcion ?? '');
 
+  // IEB: prioriza siempre columna F (Ticker) para cash.
+  if (p.broker === 'IEB') {
+    const fromTicker = IEB_CASH_TICKER_BUCKET_MAP[tickerNorm];
+    if (fromTicker) return fromTicker;
+    const fromDesc = (tickerNorm === '' || tickerNorm === '-') ? IEB_CASH_TICKER_BUCKET_MAP[descNorm] : undefined;
+    if (fromDesc) return fromDesc;
+  }
+
+  if (sub === 'ars') return 'ars';
+  if (sub === 'usd') return 'mep';
   if (sub === '7000') return 'especie_7000';
   if (sub === '10000') return 'especie_10000';
   if (sub === 'cable') return 'cable';
   if (sub === 'mep') return 'mep';
-  if (sub === 'money_market' || sub === 'money market') return 'money_market';
-  if (sub === 'usd_cash' || sub === 'usd cash') return 'usd_cash';
+  if (sub === 'money_market_ars' || sub === 'money market ars') return 'money_market_ars';
+  if (sub === 'money_market_usd' || sub === 'money market usd') return 'money_market_usd';
+  if (sub === 'money_market' || sub === 'money market') return p.moneda === 'ARS' ? 'money_market_ars' : 'money_market_usd';
+  if (sub === 'usd_cash' || sub === 'usd cash') return 'mep';
   if (sub === 'eur') return 'eur';
 
   // Heurísticas por texto (GMA/IEB a veces solo dejan la etiqueta en descripción)
@@ -119,7 +144,7 @@ function getCashBucketKey(p: Position): CashBucketKey {
   if (/\b10000\b|dolar\s*10000|especie\s*10000/.test(desc)) return 'especie_10000';
   if (/cable|dólar\s*cable|dolar\s*cable/.test(desc)) return 'cable';
   if (/\bmep\b|dolar\s*mep/.test(desc)) return 'mep';
-  if (/money\s*market|\bmmf\b/.test(desc)) return 'money_market';
+  if (/money\s*market|\bmmf\b/.test(desc)) return p.moneda === 'ARS' ? 'money_market_ars' : 'money_market_usd';
 
   if (p.moneda === 'EUR') return 'eur';
 
@@ -127,12 +152,22 @@ function getCashBucketKey(p: Position): CashBucketKey {
   if (p.moneda === 'ARS' && (!sub || sub === 'ars')) return 'ars';
 
   // Offshore u otros USD sin subtipo
-  if (p.moneda === 'USD') return 'usd';
+  if (p.moneda === 'USD') return 'mep';
 
   // ARS con subtipo residual (no debería pasar en cash típico)
   if (p.moneda === 'ARS') return 'ars';
 
-  return 'usd';
+  return 'mep';
+}
+
+function normalizeCashToken(value: string): string {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\./g, '')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
 }
 
 const CLASE_OPTIONS: { value: string; label: string }[] = [
@@ -212,6 +247,10 @@ export default function ActivosPage() {
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
+      const aIsCash = a.clase_activo === 'cash' || a.ticker.toUpperCase() === 'CASH';
+      const bIsCash = b.clase_activo === 'cash' || b.ticker.toUpperCase() === 'CASH';
+      if (aIsCash !== bIsCash) return aIsCash ? -1 : 1;
+
       let cmp = 0;
       switch (sortField) {
         case 'total_usd': cmp = a.total_usd - b.total_usd; break;
@@ -390,11 +429,59 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
   const pct = totalAum > 0 ? (activo.total_usd / totalAum) * 100 : 0;
   const uniqueTitulares = new Set(activo.titulares.map(t => t.cliente_id)).size;
   const isCash = activo.clase_activo === 'cash' || activo.ticker === 'CASH';
+  const cashRowsByClient = useMemo(() => {
+    if (!isCash) return [];
+    const byClient = new Map<
+      string,
+      {
+        cliente_id: string;
+        titular: string;
+        brokers: Set<string>;
+        cuentas: Set<string>;
+        cantidad: number;
+        total_usd: number;
+        byBucket: Partial<Record<CashBucketKey, number>>;
+      }
+    >();
+
+    for (const t of activo.titulares) {
+      const key = t.cliente_id;
+      let row = byClient.get(key);
+      if (!row) {
+        row = {
+          cliente_id: t.cliente_id,
+          titular: t.titular,
+          brokers: new Set<string>(),
+          cuentas: new Set<string>(),
+          cantidad: 0,
+          total_usd: 0,
+          byBucket: {},
+        };
+        byClient.set(key, row);
+      }
+      row.brokers.add(t.broker);
+      row.cuentas.add(t.cuenta);
+      row.cantidad += t.cantidad;
+      row.total_usd += t.valor_usd;
+      if (t.cash_bucket != null) {
+        row.byBucket[t.cash_bucket] = (row.byBucket[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
+      }
+    }
+
+    return Array.from(byClient.values())
+      .map((r) => ({
+        ...r,
+        brokerLabel: r.brokers.size === 1 ? [...r.brokers][0]! : 'Varios',
+        cuentaLabel: r.cuentas.size === 1 ? [...r.cuentas][0]! : `${r.cuentas.size} cuentas`,
+      }))
+      .sort((a, b) => b.total_usd - a.total_usd);
+  }, [isCash, activo.titulares]);
+
   const subtotalByBucket = useMemo(() => {
     const subtotals: Partial<Record<CashBucketKey, number>> = {};
     for (const t of activo.titulares) {
       if (t.cash_bucket == null) continue;
-      subtotals[t.cash_bucket] = (subtotals[t.cash_bucket] ?? 0) + t.valor_usd;
+      subtotals[t.cash_bucket] = (subtotals[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
     }
     return subtotals;
   }, [activo.titulares]);
@@ -410,7 +497,7 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
           <div className="flex gap-1">{activo.brokers.map(b => <Badge key={b} variant="outline" className="text-xs">{b}</Badge>)}</div>
         </td>
         <td className="p-3 text-center">{uniqueTitulares}</td>
-        <td className="p-3 text-right font-mono">{activo.total_cantidad.toLocaleString()}</td>
+        <td className="p-3 text-right font-mono">{isCash ? '—' : activo.total_cantidad.toLocaleString()}</td>
         <td className="p-3 text-right font-mono font-medium">{formatCurrency(activo.total_usd)}</td>
         <td className="p-3 text-right text-muted-foreground">{pct.toFixed(1)}%</td>
       </tr>
@@ -425,7 +512,7 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
                     <th className="text-left p-1.5 font-medium text-muted-foreground">Titular</th>
                     <th className="text-left p-1.5 font-medium text-muted-foreground">Broker</th>
                     <th className="text-left p-1.5 font-medium text-muted-foreground">Cuenta</th>
-                    <th className="text-right p-1.5 font-medium text-muted-foreground">Cantidad</th>
+                    {!isCash && <th className="text-right p-1.5 font-medium text-muted-foreground">Cantidad</th>}
                     {isCash &&
                       visibleCashBuckets.map(({ key, label }) => (
                         <th key={key} className="text-right p-1.5 font-medium text-muted-foreground whitespace-nowrap">
@@ -436,36 +523,42 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
                   </tr>
                 </thead>
                 <tbody>
-                  {activo.titulares
-                    .sort((a, b) => b.valor_usd - a.valor_usd)
-                    .map((t, i) => (
-                      <tr key={i} className="border-b border-border/30">
-                        <td className="p-1.5">
-                          <Link href={`/clientes/${t.cliente_id}`} className="text-primary hover:underline">{t.titular}</Link>
-                        </td>
-                        <td className="p-1.5 text-muted-foreground">{t.broker}</td>
-                        <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
-                        <td className="p-1.5 text-right font-mono">{t.cantidad.toLocaleString()}</td>
-                        {isCash &&
-                          visibleCashBuckets.map(({ key }) => (
+                  {isCash
+                    ? cashRowsByClient.map((r, i) => (
+                        <tr key={`${r.cliente_id}-${i}`} className="border-b border-border/30">
+                          <td className="p-1.5">
+                            <Link href={`/clientes/${r.cliente_id}`} className="text-primary hover:underline">{r.titular}</Link>
+                          </td>
+                          <td className="p-1.5 text-muted-foreground">{r.brokerLabel}</td>
+                          <td className="p-1.5 font-mono text-muted-foreground">{r.cuentaLabel}</td>
+                          {visibleCashBuckets.map(({ key }) => (
                             <td key={key} className="p-1.5 text-right font-mono">
-                              {t.cash_bucket === key ? formatCurrency(t.valor_usd) : '—'}
+                              {r.byBucket[key] != null ? formatCashBucketAmount(key, r.byBucket[key] ?? 0) : '—'}
                             </td>
                           ))}
-                        <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
-                      </tr>
-                    ))}
+                          <td className="p-1.5 text-right font-mono">{formatCurrency(r.total_usd)}</td>
+                        </tr>
+                      ))
+                    : activo.titulares
+                        .sort((a, b) => b.valor_usd - a.valor_usd)
+                        .map((t, i) => (
+                          <tr key={i} className="border-b border-border/30">
+                            <td className="p-1.5">
+                              <Link href={`/clientes/${t.cliente_id}`} className="text-primary hover:underline">{t.titular}</Link>
+                            </td>
+                            <td className="p-1.5 text-muted-foreground">{t.broker}</td>
+                            <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
+                            <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
+                          </tr>
+                        ))}
                   {isCash && (
                     <tr className="border-t-2 border-border font-medium bg-muted/20">
                       <td className="p-1.5">Subtotal</td>
                       <td className="p-1.5" />
                       <td className="p-1.5" />
-                      <td className="p-1.5 text-right font-mono">
-                        {activo.titulares.reduce((sum, t) => sum + t.cantidad, 0).toLocaleString()}
-                      </td>
                       {visibleCashBuckets.map(({ key }) => (
                         <td key={key} className="p-1.5 text-right font-mono">
-                          {formatCurrency(subtotalByBucket[key] ?? 0)}
+                          {formatCashBucketAmount(key, subtotalByBucket[key] ?? 0)}
                         </td>
                       ))}
                       <td className="p-1.5 text-right font-mono">{formatCurrency(activo.total_usd)}</td>
@@ -479,4 +572,19 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
       )}
     </>
   );
+}
+
+function getCashCellValue(
+  t: { valor_usd: number; valor_local: number; moneda: string },
+  bucket: CashBucketKey
+): number {
+  if (bucket === 'ars') {
+    return t.moneda === 'ARS' ? t.valor_local : t.valor_usd;
+  }
+  return t.valor_usd;
+}
+
+function formatCashBucketAmount(bucket: CashBucketKey, value: number): string {
+  if (bucket === 'ars' || bucket === 'money_market_ars') return formatCurrency(value, 'ARS');
+  return formatCurrency(value);
 }
