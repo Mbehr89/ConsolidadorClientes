@@ -11,6 +11,7 @@ import type { BrokerCode } from '@/lib/schema';
 import { detectInconsistencies } from '@/lib/analysis/inconsistencies';
 import type { BondFlowViewMode } from '@/lib/bonds/flow-regime';
 import { ExportExcelButton } from '@/components/export-excel-button';
+import { ExportPortfolioJsonButton } from '@/components/export-portfolio-json-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 
 const BROKER_OPTIONS: { code: BrokerCode; label: string }[] = [
@@ -341,6 +342,12 @@ export default function UploadPage() {
                 positions={state.allPositions}
                 options={portfolioExcelOpts}
                 label="Excel (informe completo)"
+                size="sm"
+              />
+              <ExportPortfolioJsonButton
+                positions={state.allPositions}
+                options={portfolioExcelOpts}
+                label="JSON (informe completo)"
                 size="sm"
               />
               <ExportPdfButton positions={state.allPositions} size="sm" />

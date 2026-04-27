@@ -5,13 +5,13 @@ import type { BrokerCode, Position } from '@/lib/schema';
 import { aggregateByField, monedaDimensionKey, totalAumUsd } from '@/lib/analysis/exposure';
 import { detectInconsistencies } from '@/lib/analysis/inconsistencies';
 import { buildClienteSummaries } from '@/lib/views/cliente-summary';
-import type { BondFlowViewMode } from '@/lib/bonds/flow-regime';
+import type { ExportPortfolioOptions } from './portfolio-export-payload';
+
+export { exportPortfolioJson } from './portfolio-export-payload';
 
 const { utils, writeFile } = XLSX;
 
-export interface ExportOptions {
-  /** Nombre del archivo con extensión .xlsx. Por defecto `consolidado_YYYY-MM-DD.xlsx` (fecha local). */
-  filename?: string;
+export interface ExportOptions extends Partial<Pick<ExportPortfolioOptions, 'filename' | 'fxUsdArs' | 'bondFlowViewMode'>> {
   /** Si es false, no se agrega la hoja Inconsistencias. Default: true cuando hay hallazgos. */
   includeInconsistencies?: boolean;
   /**
@@ -19,10 +19,6 @@ export interface ExportOptions {
    * `portfolio`: libro multi-hoja con formato (ExcelJS), similar a un informe “master”.
    */
   layout?: 'standard' | 'portfolio';
-  /** Tipo de cambio USD/ARS. Si informás, el informe portfolio Completa columnas en ARS (USD×TC). */
-  fxUsdArs?: number | null;
-  /** Con calendario en doble ley (general + AFIP), elige qué rama mostrar en la hoja Flujo_Bonos. */
-  bondFlowViewMode?: BondFlowViewMode;
 }
 
 const HEADER_STYLE: NonNullable<CellObject['s']> = {

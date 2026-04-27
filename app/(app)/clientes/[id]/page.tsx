@@ -20,6 +20,7 @@ import {
 import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
 import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
 import { ExportExcelButton } from '@/components/export-excel-button';
+import { ExportPortfolioJsonButton } from '@/components/export-portfolio-json-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/flow-report';
 
@@ -406,6 +407,7 @@ export default function ClienteDetailPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <ExportExcelButton positions={positions} options={excelExportOpts} size="sm" />
+            <ExportPortfolioJsonButton positions={positions} options={excelExportOpts} size="sm" />
             <ExportPdfButton
               positions={positions}
               clienteId={clienteId}
