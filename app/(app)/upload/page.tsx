@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { cn, formatCompact } from '@/lib/utils';
 import type { BrokerCode } from '@/lib/schema';
 import { detectInconsistencies } from '@/lib/analysis/inconsistencies';
+import type { BondFlowViewMode } from '@/lib/bonds/flow-regime';
 import { ExportExcelButton } from '@/components/export-excel-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 
@@ -29,6 +30,7 @@ export default function UploadPage() {
   const hasAutoSyncedRef = useRef(false);
   const syncInFlightRef = useRef(false);
   const [autoParseAfterDrive, setAutoParseAfterDrive] = useState(false);
+  const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false);
@@ -58,6 +60,17 @@ export default function UploadPage() {
     if (!state.hasParsed || state.allPositions.length === 0) return 0;
     return detectInconsistencies(state.allPositions).length;
   }, [state.hasParsed, state.allPositions]);
+
+  const portfolioExcelOpts = useMemo(() => {
+    const d = new Date();
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return {
+      layout: 'portfolio' as const,
+      filename: `Portfolio_Consolidado_Master_${ymd}.xlsx`,
+      fxUsdArs: state.fxManual ?? state.fxSuggested,
+      bondFlowViewMode,
+    };
+  }, [state.fxManual, state.fxSuggested, bondFlowViewMode]);
 
   const syncFromDrive = useCallback(async (force = false) => {
     if (syncInFlightRef.current) return;
@@ -310,8 +323,26 @@ export default function UploadPage() {
                 <Card key={label}><CardContent className="p-4"><p className="text-xs text-muted-foreground font-medium uppercase">{label}</p><p className="text-2xl font-bold mt-1">{value}</p></CardContent></Card>
               ))}
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Flujo bonos (ley / AFIP)</span>
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm min-w-[148px]"
+                  value={bondFlowViewMode}
+                  onChange={(e) => setBondFlowViewMode(e.target.value as BondFlowViewMode)}
+                  aria-label="Régimen de flujos para la hoja Flujo_Bonos del informe completo"
+                >
+                  <option value="normal">Ley general</option>
+                  <option value="afip">Régimen AFIP</option>
+                </select>
+              </div>
               <ExportExcelButton positions={state.allPositions} size="sm" />
+              <ExportExcelButton
+                positions={state.allPositions}
+                options={portfolioExcelOpts}
+                label="Excel (informe completo)"
+                size="sm"
+              />
               <ExportPdfButton positions={state.allPositions} size="sm" />
             </div>
           </div>

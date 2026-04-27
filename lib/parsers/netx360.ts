@@ -25,6 +25,7 @@ import {
   generateClienteIdSync,
 } from '../matching';
 import { parseBrokerDate, extractNetx360ReportDate, parseNumeric } from '../fx';
+import { applyConfirmedGlossaryToPosition, lookupTickerMeta } from './ticker-glossary';
 
 // ─── Constants ──────────────────────────────────────────
 
@@ -286,8 +287,10 @@ function parseRow(
     posWarnings.push(WARNING_CODES.POSICION_RESIDUAL);
   }
 
+  const metaGlossary = lookupTickerMeta(opts.tickers_metadata, symbol);
+
   // ─── Ticker no confirmado check ───
-  if (symbol && symbol !== 'USD' && opts.tickers_metadata && !opts.tickers_metadata[symbol]?.confirmado) {
+  if (symbol && symbol !== 'USD' && opts.tickers_metadata && !metaGlossary?.confirmado) {
     posWarnings.push(WARNING_CODES.TICKER_NO_CONFIRMADO);
   }
 
@@ -295,8 +298,8 @@ function parseRow(
   let paisEmisor: string | null = null;
   if (isin && isin.length >= 2) {
     paisEmisor = isin.slice(0, 2);
-  } else if (opts.tickers_metadata?.[symbol]) {
-    paisEmisor = opts.tickers_metadata[symbol]!.pais;
+  } else if (metaGlossary) {
+    paisEmisor = metaGlossary.pais;
   }
 
   // ─── Build position ───
@@ -339,7 +342,7 @@ function parseRow(
     warnings: posWarnings,
   };
 
-  return position;
+  return applyConfirmedGlossaryToPosition(position, metaGlossary);
 }
 
 
@@ -385,7 +388,7 @@ function classifyAsset(
   }
 
   // 5. Check tickers metadata for ETF override
-  const meta = opts.tickers_metadata?.[symbol];
+  const meta = lookupTickerMeta(opts.tickers_metadata, symbol);
   if (meta?.es_etf) {
     return { clase: 'etf', formaLegal: 'directa', monedaSubtipo: null, warnings };
   }

@@ -27,6 +27,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
     "jaro-winkler": "^0.2.8",
     "lucide-react": "^0.447.0",
     "next": "14.2.15",

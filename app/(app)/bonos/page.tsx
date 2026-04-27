@@ -8,23 +8,12 @@ import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics, teaToTnaMonthly } from '@/lib/bonds/metrics';
 import { issuerByTickerFromEvents, uniqueTickers } from '@/lib/bonds/parse-calendar';
 import { issuerLabel } from '@/lib/bonds/issuers';
+import { filterBondEventsByViewMode, tickersWithBothRegimes, type BondFlowViewMode } from '@/lib/bonds/flow-regime';
+import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
 
 const PORTFOLIO_LS = 'consolidador-bond-portfolio-v1';
 
 type PortfolioLine = { ticker: string; weightPct: number };
-
-function reviveEvents(raw: Array<Record<string, unknown>>): BondPaymentEvent[] {
-  return raw.map((r) => ({
-    asset: String(r.asset),
-    issuer: r.issuer != null && String(r.issuer).trim() !== '' ? String(r.issuer).trim() : undefined,
-    date: new Date(String(r.date)),
-    currency: String(r.currency ?? 'USD'),
-    flowPer100: Number(r.flowPer100),
-    couponPer100: r.couponPer100 != null ? Number(r.couponPer100) : undefined,
-    amortizationPer100: r.amortizationPer100 != null ? Number(r.amortizationPer100) : undefined,
-    residualPctOfPar: r.residualPctOfPar != null ? Number(r.residualPctOfPar) : undefined,
-  }));
-}
 
 function fmtPct(x: number | null | undefined, digits = 2): string {
   if (x == null || !Number.isFinite(x)) return '—';
@@ -55,6 +44,7 @@ export default function BonosPage() {
   const [durMax, setDurMax] = useState('');
 
   const [portfolio, setPortfolio] = useState<PortfolioLine[]>([]);
+  const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
 
   useEffect(() => {
     try {
@@ -95,7 +85,7 @@ export default function BonosPage() {
           setLoadError(data.error);
           setEvents([]);
         } else if (data.events) {
-          setEvents(reviveEvents(data.events));
+          setEvents(reviveBondEventsFromApi(data.events));
           setLoadError(data.message ?? null);
         }
       } catch {
@@ -108,6 +98,12 @@ export default function BonosPage() {
       cancelled = true;
     };
   }, []);
+
+  const eventsView = useMemo(
+    () => filterBondEventsByViewMode(events, bondFlowViewMode),
+    [events, bondFlowViewMode]
+  );
+  const showFlowRegimeToggle = useMemo(() => tickersWithBothRegimes(events).length > 0, [events]);
 
   const tickers = useMemo(() => uniqueTickers(events), [events]);
   const issuerByTicker = useMemo(() => issuerByTickerFromEvents(events), [events]);
@@ -139,11 +135,11 @@ export default function BonosPage() {
       metrics: ReturnType<typeof computeBondYieldMetrics>;
     }> = [];
     for (const t of tickers) {
-      const m = computeBondYieldMetrics(events, t, valuationAsDate, dirtyN, nominalN, fx);
+      const m = computeBondYieldMetrics(eventsView, t, valuationAsDate, dirtyN, nominalN, fx);
       out.push({ ticker: t, issuer: issuerLabel(t, issuerByTicker.get(t)), metrics: m });
     }
     return out;
-  }, [events, tickers, issuerByTicker, valuationAsDate, dirtyN, nominalN, fx]);
+  }, [eventsView, tickers, issuerByTicker, valuationAsDate, dirtyN, nominalN, fx]);
 
   const issuers = useMemo(() => {
     const set = new Set<string>();
@@ -266,6 +262,21 @@ export default function BonosPage() {
         <p className="text-sm text-destructive" role="alert">
           {loadError}
         </p>
+      )}
+
+      {showFlowRegimeToggle && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm print:hidden">
+          <span className="text-muted-foreground">Flujos (ley / AFIP):</span>
+          <select
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            value={bondFlowViewMode}
+            onChange={(e) => setBondFlowViewMode(e.target.value as BondFlowViewMode)}
+            aria-label="Ley general o régimen AFIP"
+          >
+            <option value="normal">Ley general</option>
+            <option value="afip">Régimen AFIP</option>
+          </select>
+        </div>
       )}
 
       <div className="grid gap-4 print:hidden">

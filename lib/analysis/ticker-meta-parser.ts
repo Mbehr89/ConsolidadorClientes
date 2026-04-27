@@ -10,7 +10,7 @@ export function mapTickersMetadataForParser(
     const key = k.toUpperCase();
     out[key] = {
       pais: v.pais,
-      clase: v.clase,
+      clase: v.clase === 'cedear' ? 'equity' : v.clase,
       es_etf: v.es_etf,
       nombre: v.nombre,
       confirmado: v.confirmado,

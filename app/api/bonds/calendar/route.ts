@@ -36,6 +36,7 @@ export async function GET() {
       couponPer100: e.couponPer100,
       amortizationPer100: e.amortizationPer100,
       residualPctOfPar: e.residualPctOfPar,
+      ...(e.flowRegime != null ? { flowRegime: e.flowRegime } : {}),
     }));
     return NextResponse.json({ events: serialized, configured: true });
   } catch (err) {

@@ -62,6 +62,8 @@ Se elige el **primer** candidato (orden: fila 0, merge 0–1, fila 1, merge 1–
 | **Cupón c/100** | Opcional | Preferir: `c/100` + `vn` + algo de `inter`, sin `total`, sin `tasa`. Si no: `cupon`, `coupon`, `interes`. |
 | **Amortización c/100** | Opcional | Similar con `amort` / `amortizacion` / `amortization`. |
 | **Valor residual %** | Opcional | `valor residual`, `residual`, `valor resid` (informativo; el motor principal usa el **total**). |
+| **Régimen (ley / AFIP)** | Opcional | Encabezados tipo `régimen impositivo`, `tratamiento fiscal`, `AFIP` (valores: ley general, régimen AFIP, etc.). Si hay **dos filas** para el mismo bono y fecha sin esta columna, el parser asigna **1.ª fila = ley general**, **2.ª = AFIP** (evita doble conteo; en la UI se elige qué brazo ver). |
+| **Dos series en columna Ticker** | Convención | Mismo VN lógico con flujos distintos (p. ej. `BPOC7` vs `BPOC7 @AFIP`): la variante con `@AFIP` / `(AFIP)` es la serie AFIP; la otra se trata como ley general. El cruce con cartera sigue usando el ticker base (p. ej. `BPOC7`). |
 
 ### Prioridad para la columna “Flujo de fondos c/100 vn” (total)
 
@@ -105,6 +107,7 @@ interface BondPaymentEvent {
   couponPer100?: number;
   amortizationPer100?: number;
   residualPctOfPar?: number; // si aplica: si raw ≤ 1, multiplicar ×100
+  flowRegime?: 'afip' | 'normal'; // doble fila ley/AFIP (opcional)
 }
 ```
 

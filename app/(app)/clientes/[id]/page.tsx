@@ -12,29 +12,23 @@ import { BROKERS } from '@/lib/brokers';
 import type { Position } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
+import {
+  filterBondEventsByViewMode,
+  tickersWithBothRegimes,
+  type BondFlowViewMode,
+} from '@/lib/bonds/flow-regime';
+import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
 import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
 import { ExportExcelButton } from '@/components/export-excel-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/flow-report';
-
-function reviveEvents(raw: Array<Record<string, unknown>>): BondPaymentEvent[] {
-  return raw.map((r) => ({
-    asset: String(r.asset),
-    issuer: r.issuer != null && String(r.issuer).trim() !== '' ? String(r.issuer).trim() : undefined,
-    date: new Date(String(r.date)),
-    currency: String(r.currency ?? 'USD'),
-    flowPer100: Number(r.flowPer100),
-    couponPer100: r.couponPer100 != null ? Number(r.couponPer100) : undefined,
-    amortizationPer100: r.amortizationPer100 != null ? Number(r.amortizationPer100) : undefined,
-    residualPctOfPar: r.residualPctOfPar != null ? Number(r.residualPctOfPar) : undefined,
-  }));
-}
 
 export default function ClienteDetailPage() {
   const params = useParams();
   const clienteId = params.id as string;
   const { state } = useConsolidation();
   const [bondEvents, setBondEvents] = useState<BondPaymentEvent[]>([]);
+  const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
   const [sortBy, setSortBy] = useState<'valor_usd' | 'pct_portfolio' | 'clase'>('valor_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [cashExpanded, setCashExpanded] = useState(false);
@@ -55,6 +49,16 @@ export default function ClienteDetailPage() {
     return `consolidado_cliente_${safe}_${ymd}.xlsx`;
   }, [clienteId]);
   const exportPdfFilename = useMemo(() => exportFilename.replace(/\.xlsx$/i, '.pdf'), [exportFilename]);
+
+  const excelExportOpts = useMemo(
+    () => ({
+      layout: 'portfolio' as const,
+      filename: exportFilename,
+      fxUsdArs: state.fxManual ?? state.fxSuggested ?? null,
+      bondFlowViewMode,
+    }),
+    [exportFilename, state.fxManual, state.fxSuggested, bondFlowViewMode]
+  );
 
   const titular = positions[0]?.titular ?? '';
   const tipoTitular = positions[0]?.tipo_titular ?? 'persona';
@@ -81,7 +85,7 @@ export default function ClienteDetailPage() {
       try {
         const res = await fetch('/api/bonds/calendar', { cache: 'no-store' });
         const data = (await res.json()) as { events?: Array<Record<string, unknown>> };
-        if (!cancelled && data.events) setBondEvents(reviveEvents(data.events));
+        if (!cancelled && data.events) setBondEvents(reviveBondEventsFromApi(data.events));
       } catch {
         if (!cancelled) setBondEvents([]);
       }
@@ -90,6 +94,12 @@ export default function ClienteDetailPage() {
       cancelled = true;
     };
   }, []);
+
+  const bondEventsView = useMemo(
+    () => filterBondEventsByViewMode(bondEvents, bondFlowViewMode),
+    [bondEvents, bondFlowViewMode]
+  );
+  const showFlowRegimeToggle = useMemo(() => tickersWithBothRegimes(bondEvents).length > 0, [bondEvents]);
 
   const bondMetricsByRow = useMemo(() => {
     const out = new Map<number, ReturnType<typeof computeBondYieldMetrics>>();
@@ -116,7 +126,7 @@ export default function ClienteDetailPage() {
       if (unitPriceUsd == null || !Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) continue;
       const dirtyPricePer100 = unitPriceUsd * 100;
       const metrics = computeBondYieldMetrics(
-        bondEvents,
+        bondEventsView,
         normalizeBondTicker(p.ticker),
         valuationDate,
         dirtyPricePer100,
@@ -126,7 +136,7 @@ export default function ClienteDetailPage() {
       out.set(p.source_row, metrics);
     }
     return out;
-  }, [positions, bondEvents]);
+  }, [positions, bondEventsView]);
 
   const bondPortfolioAgg = useMemo(() => {
     const bondRows = positions.filter(
@@ -168,7 +178,7 @@ export default function ClienteDetailPage() {
     };
 
     const paymentCurrencyByTicker = new Map<string, 'ARS' | 'USD'>();
-    for (const ev of bondEvents) {
+    for (const ev of bondEventsView) {
       const key = normalizeBondTicker(ev.asset);
       if (paymentCurrencyByTicker.has(key)) continue;
       const c = ev.currency.toUpperCase();
@@ -191,7 +201,7 @@ export default function ClienteDetailPage() {
       covered: overall.covered,
       totalBondRows: bondRows.length,
     };
-  }, [positions, bondMetricsByRow, bondEvents]);
+  }, [positions, bondMetricsByRow, bondEventsView]);
 
   const executivePortfolioMetrics = useMemo(() => {
     const bondRows = positions.filter(
@@ -241,7 +251,7 @@ export default function ClienteDetailPage() {
       nominalByTicker.set(t, (nominalByTicker.get(t) ?? 0) + n);
     }
     const portfolioBondTickers = new Set([...nominalByTicker.keys()]);
-    const rows = bondEvents
+    const rows = bondEventsView
       .filter((ev) => portfolioBondTickers.has(normalizeBondTicker(ev.asset)))
       .map((ev) => {
         const nominal = nominalByTicker.get(normalizeBondTicker(ev.asset)) ?? 0;
@@ -259,7 +269,7 @@ export default function ClienteDetailPage() {
       mappedTickers: new Set(rows.map((r) => r.ev.asset)).size,
       totalTickers: portfolioBondTickers.size,
     };
-  }, [positions, bondEvents]);
+  }, [positions, bondEventsView]);
 
   const bondFlowDebug = useMemo(() => {
     const bondPositions = positions.filter(
@@ -395,7 +405,7 @@ export default function ClienteDetailPage() {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            <ExportExcelButton positions={positions} options={{ filename: exportFilename }} size="sm" />
+            <ExportExcelButton positions={positions} options={excelExportOpts} size="sm" />
             <ExportPdfButton
               positions={positions}
               clienteId={clienteId}
@@ -609,8 +619,25 @@ export default function ClienteDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Flujo completo de bonos mapeados</CardTitle>
+          {showFlowRegimeToggle && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Flujos (impuesto):</span>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                value={bondFlowViewMode}
+                onChange={(e) => setBondFlowViewMode(e.target.value as BondFlowViewMode)}
+                aria-label="Régimen de flujo: ley general o AFIP"
+              >
+                <option value="normal">Ley general</option>
+                <option value="afip">Régimen AFIP</option>
+              </select>
+            </div>
+          )}
           <p className="text-sm text-muted-foreground">
             Tickers mapeados: {mappedBondFlows.mappedTickers}/{mappedBondFlows.totalTickers}
+            {showFlowRegimeToggle && (
+              <span className="ml-2">· {bondFlowViewMode === 'afip' ? 'Sólo AFIP' : 'Sólo ley general'}</span>
+            )}
           </p>
           <div>
             <div className="mb-2 flex flex-wrap gap-3 text-xs text-muted-foreground">

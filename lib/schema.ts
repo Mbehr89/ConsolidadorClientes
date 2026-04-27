@@ -16,19 +16,24 @@ export type BrokerTipo = z.infer<typeof BrokerTipoSchema>;
 export const BrokerPaisSchema = z.enum(['AR', 'US']);
 export type BrokerPais = z.infer<typeof BrokerPaisSchema>;
 
-export const ClaseActivoSchema = z.enum([
-  'equity',   // acción directa (AR o extranjera)
+/** Valores almacenados; el CEDEAR en BYMA/ARDs se indica con `forma_legal: cedear`, no con clase separada. */
+const ClaseActivoBaseSchema = z.enum([
+  'equity',   // acción local o extranjera; incluye depósito CEDEAR
   'bond',     // bono soberano, treasury, corporate
   'cash',     // efectivo, money market, BDP, savings
   'fund',     // FCI, mutual fund
   'option',   // call/put, long o short
-  'etf',      // ETF (directo o CEDEAR de ETF)
-  'cedear',   // CEDEAR de acción individual
+  'etf',      // ETF
   'on',       // obligación negociable AR
   'letra',    // letra del tesoro AR
   'other',    // no clasificado → al glosario
 ]);
-export type ClaseActivo = z.infer<typeof ClaseActivoSchema>;
+/** Acepta `cedear` legacy (parseos/config vieja) y lo normaliza a `equity`. */
+export const ClaseActivoSchema = z.preprocess(
+  (v) => (v === 'cedear' ? 'equity' : v),
+  ClaseActivoBaseSchema
+);
+export type ClaseActivo = z.infer<typeof ClaseActivoBaseSchema>;
 
 export const FormaLegalSchema = z.enum([
   'directa',    // activo comprado en su mercado nativo

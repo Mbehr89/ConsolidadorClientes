@@ -1,4 +1,6 @@
 import type { BondPaymentEvent } from './types';
+import { applyRegimeFromAssetSeriesSiblings, parseFlowRegimeValue } from './flow-regime';
+import { normalizeBondTicker } from './ticker-normalize';
 
 function stripBom(s: string): string {
   return s.replace(/^\uFEFF/, '').trim();
@@ -200,6 +202,18 @@ function headerMatchesResidual(h: string): boolean {
   return h.includes('valor residual') || h.includes('residual') || h.includes('valor resid');
 }
 
+/** Columna p.ej. “Régimen impositivo”, “AFIP / General”, “Tratamiento” */
+function headerMatchesRegime(h: string): boolean {
+  if (h.includes('riesgo pais') || h.includes('r. pais')) return false;
+  if (h === 'afip' || h === 'regimen' || h.startsWith('regimen ')) return true;
+  if (h.includes('regimen') && (h.includes('impositivo') || h.includes('tribut') || h.includes('flujo'))) return true;
+  if (h.includes('impositivo') && !h.includes('moneda')) return true;
+  if (h.includes('tratamiento') && h.includes('fiscal')) return true;
+  if (h.includes('tipo flujo') || h.includes('clase de flujo')) return true;
+  if (h.includes('ley') && h.includes('gananc') && h.includes('bono')) return true;
+  return false;
+}
+
 interface ColMap {
   date: number;
   ticker: number;
@@ -209,6 +223,7 @@ interface ColMap {
   coupon?: number;
   amort?: number;
   residual?: number;
+  regime?: number;
 }
 
 function tryMapHeaders(headers: string[]): ColMap | null {
@@ -220,6 +235,7 @@ function tryMapHeaders(headers: string[]): ColMap | null {
   let coupon: number | undefined;
   let amort: number | undefined;
   let residual: number | undefined;
+  let regime: number | undefined;
 
   for (let i = 0; i < n; i++) {
     const h = norm[i]!;
@@ -229,6 +245,7 @@ function tryMapHeaders(headers: string[]): ColMap | null {
     if (coupon === undefined && headerMatchesCoupon(h)) coupon = i;
     if (amort === undefined && headerMatchesAmort(h)) amort = i;
     if (residual === undefined && headerMatchesResidual(h)) residual = i;
+    if (regime === undefined && headerMatchesRegime(h)) regime = i;
   }
 
   const flow = pickFlowColumnIndex(norm);
@@ -244,6 +261,7 @@ function tryMapHeaders(headers: string[]): ColMap | null {
     coupon,
     amort,
     residual,
+    regime,
   };
 }
 
@@ -332,10 +350,45 @@ export function parseBondPaymentCalendarCsv(csvText: string): BondPaymentEvent[]
       }
     }
 
+    if (colMap.regime !== undefined) {
+      const role = parseFlowRegimeValue(row[colMap.regime] ?? '');
+      if (role) ev.flowRegime = role;
+    }
     events.push(ev);
   }
 
+  applyRegimeFromAssetSeriesSiblings(events);
+  synthesizeRegimeOnDuplicateDatePairs(events);
+
   return events;
+}
+
+/**
+ * Misma bono+fecha, dos filas sin columna: 1.ª = ley general, 2.ª = AFIP (orden del CSV).
+ * Si una fila trae `afip` y la otra no, completa con el par opuesto.
+ */
+function synthesizeRegimeOnDuplicateDatePairs(events: BondPaymentEvent[]): void {
+  const byKey = new Map<string, BondPaymentEvent[]>();
+  for (const e of events) {
+    const k = `${normalizeBondTicker(e.asset)}|${e.date.getUTCFullYear()}-${e.date.getUTCMonth()}-${e.date.getUTCDate()}`;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k)!.push(e);
+  }
+  for (const arr of byKey.values()) {
+    if (arr.length !== 2) continue;
+    const a = arr[0]!;
+    const b = arr[1]!;
+    if (a.flowRegime && b.flowRegime) continue;
+    if (!a.flowRegime && !b.flowRegime) {
+      a.flowRegime = 'normal';
+      b.flowRegime = 'afip';
+      continue;
+    }
+    if (a.flowRegime === 'afip' && !b.flowRegime) b.flowRegime = 'normal';
+    else if (a.flowRegime === 'normal' && !b.flowRegime) b.flowRegime = 'afip';
+    else if (b.flowRegime === 'afip' && !a.flowRegime) a.flowRegime = 'normal';
+    else if (b.flowRegime === 'normal' && !a.flowRegime) a.flowRegime = 'afip';
+  }
 }
 
 export function uniqueTickers(events: BondPaymentEvent[]): string[] {

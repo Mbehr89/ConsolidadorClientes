@@ -5,7 +5,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import type { BrokerCode, ClaseActivo } from '@/lib/schema';
-import type { TickerMeta, TickerPendiente, TickersMetadataStore, TickersPendientesStore } from '@/lib/config-store/types';
+import type {
+  TickerMeta,
+  TickerPendiente,
+  TickersMetadataStore,
+  TickersPendientesStore,
+} from '@/lib/config-store/types';
 import { AdminOnly } from '@/components/admin-only';
 
 const CLASE_LIST: ClaseActivo[] = [
@@ -15,7 +20,6 @@ const CLASE_LIST: ClaseActivo[] = [
   'fund',
   'option',
   'etf',
-  'cedear',
   'on',
   'letra',
   'other',
@@ -42,6 +46,16 @@ function buildConfirmedMeta(
 }
 
 type RowEdit = { clase: string; pais: string; esEtf: boolean };
+type ConfirmedRowEdit = { nombre: string; clase: string; pais: string; esEtf: boolean };
+
+function toConfirmedEdit(m: TickerMeta): ConfirmedRowEdit {
+  return {
+    nombre: m.nombre,
+    clase: m.clase,
+    pais: m.pais ?? '',
+    esEtf: m.es_etf,
+  };
+}
 
 export default function GlosarioPage() {
   const [metadata, setMetadata] = useState<TickersMetadataStore>({});
@@ -53,6 +67,7 @@ export default function GlosarioPage() {
   const [filterBroker, setFilterBroker] = useState<BrokerCode | 'all'>('all');
   const [filterEstado, setFilterEstado] = useState<'all' | 'pendiente' | 'en_revision'>('all');
   const [edits, setEdits] = useState<Record<string, RowEdit>>({});
+  const [confirmedEdits, setConfirmedEdits] = useState<Record<string, ConfirmedRowEdit>>({});
   const [confirmedOpen, setConfirmedOpen] = useState(true);
 
   const load = useCallback(async () => {
@@ -77,6 +92,11 @@ export default function GlosarioPage() {
         };
       }
       setEdits(nextEdits);
+      const nextConfirmed: Record<string, ConfirmedRowEdit> = {};
+      for (const [k, m] of Object.entries(meta)) {
+        if (m.confirmado) nextConfirmed[k] = toConfirmedEdit(m);
+      }
+      setConfirmedEdits(nextConfirmed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error');
     } finally {
@@ -140,10 +160,15 @@ export default function GlosarioPage() {
       setSaving(true);
       setError(null);
       try {
-        const meta = { ...metadata, [ticker]: buildConfirmedMeta(pend, { clase: e.clase, pais: e.pais, esEtf: e.esEtf }) };
+        const built = buildConfirmedMeta(pend, { clase: e.clase, pais: e.pais, esEtf: e.esEtf });
+        const meta = { ...metadata, [ticker]: built };
         const rest = { ...pendientes };
         delete rest[ticker];
         await persistBoth(meta, rest);
+        setConfirmedEdits((prev) => ({
+          ...prev,
+          [ticker]: toConfirmedEdit(built),
+        }));
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error');
       } finally {
@@ -174,6 +199,37 @@ export default function GlosarioPage() {
     [pendientes, metadata, persistBoth]
   );
 
+  const saveConfirmed = useCallback(
+    async (ticker: string) => {
+      const m = metadata[ticker];
+      const e = confirmedEdits[ticker];
+      if (!m?.confirmado || !e) return;
+      setSaving(true);
+      setError(null);
+      try {
+        const pais = e.pais.trim().length === 2 ? e.pais.trim().toUpperCase() : null;
+        const nextMeta: TickerMeta = {
+          ...m,
+          nombre: e.nombre.trim().slice(0, 200) || ticker,
+          clase: e.clase,
+          pais,
+          es_etf: e.esEtf,
+          confirmado: true,
+          fuente: 'admin',
+          confirmado_por: 'admin',
+          fecha: new Date().toISOString(),
+        };
+        await persistBoth({ ...metadata, [ticker]: nextMeta }, pendientes);
+        setConfirmedEdits((prev) => ({ ...prev, [ticker]: toConfirmedEdit(nextMeta) }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [metadata, confirmedEdits, pendientes, persistBoth]
+  );
+
   const confirmAllFiltered = useCallback(async () => {
     const toConfirm = filteredPendientes.filter((p) => p.estado === 'pendiente');
     if (toConfirm.length === 0) return;
@@ -191,6 +247,14 @@ export default function GlosarioPage() {
         delete pend[p.ticker];
       }
       await persistBoth(meta, pend);
+      setConfirmedEdits((prev) => {
+        const next = { ...prev };
+        for (const p of toConfirm) {
+          const row = meta[p.ticker]!;
+          next[p.ticker] = toConfirmedEdit(row);
+        }
+        return next;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error');
     } finally {
@@ -409,31 +473,102 @@ export default function GlosarioPage() {
         </CardHeader>
         {confirmedOpen && (
           <CardContent className="p-0">
-            <div className="overflow-auto max-h-[360px] border-t">
+            <div className="overflow-auto max-h-[480px] border-t">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted/40 border-b">
                   <tr>
                     <th className="text-left p-2 font-medium">Ticker</th>
-                    <th className="text-left p-2 font-medium">Nombre</th>
+                    <th className="text-left p-2 font-medium min-w-[180px]">Nombre</th>
                     <th className="text-left p-2 font-medium">Clase</th>
-                    <th className="text-left p-2 font-medium">País</th>
+                    <th className="text-left p-2 font-medium w-20">País</th>
                     <th className="text-center p-2 font-medium">ETF</th>
                     <th className="text-left p-2 font-medium">Fuente</th>
-                    <th className="text-left p-2 font-medium">Fecha</th>
+                    <th className="text-left p-2 font-medium">Últ. actualización</th>
+                    <th className="text-right p-2 font-medium">Acción</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {confirmedEntries.map(([t, m]) => (
-                    <tr key={t} className="border-b border-border/30">
-                      <td className="p-2 font-mono font-semibold">{t}</td>
-                      <td className="p-2 max-w-[200px] truncate">{m.nombre}</td>
-                      <td className="p-2">{m.clase}</td>
-                      <td className="p-2 font-mono">{m.pais ?? '—'}</td>
-                      <td className="p-2 text-center">{m.es_etf ? 'Sí' : '—'}</td>
-                      <td className="p-2">{m.fuente}</td>
-                      <td className="p-2 text-muted-foreground whitespace-nowrap">{m.fecha.slice(0, 10)}</td>
-                    </tr>
-                  ))}
+                  {confirmedEntries.map(([t, m]) => {
+                    const e = confirmedEdits[t] ?? toConfirmedEdit(m);
+                    const claseInList = CLASE_LIST.includes(e.clase as ClaseActivo);
+                    return (
+                      <tr key={t} className="border-b border-border/30">
+                        <td className="p-2 font-mono font-semibold align-middle">{t}</td>
+                        <td className="p-2 align-middle">
+                          <input
+                            className="w-full min-w-[160px] max-w-[280px] h-8 rounded-md border bg-background px-2 text-xs"
+                            value={e.nombre}
+                            onChange={(ev) =>
+                              setConfirmedEdits((prev) => ({
+                                ...prev,
+                                [t]: { ...e, nombre: ev.target.value },
+                              }))
+                            }
+                          />
+                        </td>
+                        <td className="p-2 align-middle">
+                          <select
+                            className="h-8 w-full min-w-[100px] max-w-[130px] rounded-md border bg-background px-1"
+                            value={e.clase}
+                            onChange={(ev) => {
+                              const v = ev.target.value;
+                              setConfirmedEdits((prev) => ({
+                                ...prev,
+                                [t]: { ...e, clase: v, esEtf: v === 'etf' },
+                              }));
+                            }}
+                          >
+                            {!claseInList && <option value={e.clase}>{e.clase} (legacy)</option>}
+                            {CLASE_LIST.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-2 align-middle">
+                          <input
+                            className="h-8 w-14 rounded-md border bg-background px-1 font-mono uppercase"
+                            maxLength={2}
+                            value={e.pais}
+                            onChange={(ev) =>
+                              setConfirmedEdits((prev) => ({
+                                ...prev,
+                                [t]: { ...e, pais: ev.target.value.toUpperCase().slice(0, 2) },
+                              }))
+                            }
+                            placeholder="—"
+                          />
+                        </td>
+                        <td className="p-2 text-center align-middle">
+                          <input
+                            type="checkbox"
+                            checked={e.esEtf}
+                            onChange={(ev) =>
+                              setConfirmedEdits((prev) => ({
+                                ...prev,
+                                [t]: { ...e, esEtf: ev.target.checked },
+                              }))
+                            }
+                          />
+                        </td>
+                        <td className="p-2 text-muted-foreground align-middle">{m.fuente}</td>
+                        <td className="p-2 text-muted-foreground whitespace-nowrap align-middle">
+                          {m.fecha.slice(0, 10)}
+                        </td>
+                        <td className="p-2 text-right align-middle">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={saving || loading}
+                            onClick={() => void saveConfirmed(t)}
+                          >
+                            Guardar
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

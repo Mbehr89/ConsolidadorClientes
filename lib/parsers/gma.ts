@@ -20,6 +20,7 @@ import type { Position, ParseError, ParseResult, DetectResult } from '../schema'
 import { WARNING_CODES } from '../schema';
 import { normalizeTitular, generateClienteIdSync } from '../matching';
 import { parseBrokerDate, parseNumeric } from '../fx';
+import { applyConfirmedGlossaryToPosition, lookupTickerMeta } from './ticker-glossary';
 
 // ─── Constants ──────────────────────────────────────────
 
@@ -28,7 +29,7 @@ const BROKER_CODE = 'GMA' as const;
 /** Sección nivel 1 → clase_activo + moneda */
 const SECCION_MAP: Record<string, { clase: Position['clase_activo']; formaLegal: Position['forma_legal']; monedaEmision: string }> = {
   'Acciones': { clase: 'equity', formaLegal: 'directa', monedaEmision: 'ARS' },
-  'Cedears': { clase: 'cedear', formaLegal: 'cedear', monedaEmision: 'ARS' },
+  'Cedears': { clase: 'equity', formaLegal: 'cedear', monedaEmision: 'ARS' },
   'Fondos': { clase: 'fund', formaLegal: null, monedaEmision: 'ARS' },
   'LETRAS TESORO': { clase: 'letra', formaLegal: 'bono_local', monedaEmision: 'ARS' },
   'Obligaciones Negociables': { clase: 'on', formaLegal: 'on_local', monedaEmision: 'USD' },
@@ -358,22 +359,24 @@ function parseDataRow(
     }
   }
 
+  const metaGlossary = lookupTickerMeta(opts.tickers_metadata, ticker);
+
   // ─── Pais emisor ───
   let paisEmisor: string | null = null;
-  if (ticker && opts.tickers_metadata?.[ticker]) {
-    paisEmisor = opts.tickers_metadata[ticker]!.pais;
+  if (metaGlossary) {
+    paisEmisor = metaGlossary.pais;
   }
 
   // ─── ETF override ───
   let claseActivoFinal = claseActivo;
   let formaLegalFinal = formaLegal;
-  if (ticker && opts.tickers_metadata?.[ticker]?.es_etf) {
+  if (ticker && metaGlossary?.es_etf) {
     claseActivoFinal = 'etf';
     // Preserve formaLegal from section (cedear if in Cedears block)
   }
 
   // ─── Ticker no confirmado ───
-  if (ticker && opts.tickers_metadata && !opts.tickers_metadata[ticker]?.confirmado) {
+  if (ticker && opts.tickers_metadata && !metaGlossary?.confirmado) {
     posWarnings.push(WARNING_CODES.TICKER_NO_CONFIRMADO);
   }
 
@@ -424,7 +427,7 @@ function parseDataRow(
     warnings: posWarnings,
   };
 
-  return position;
+  return applyConfirmedGlossaryToPosition(position, metaGlossary);
 }
 
 

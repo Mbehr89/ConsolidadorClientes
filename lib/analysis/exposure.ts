@@ -169,7 +169,8 @@ export function aggregateInstrumentGroups(
     const v = p.valor_mercado_usd ?? 0;
     a.valor += v;
     a.titulares.add(p.cliente_id);
-    a.clase_por_usd.set(p.clase_activo, (a.clase_por_usd.get(p.clase_activo) ?? 0) + v);
+    const cNorm = (p.clase_activo as string) === 'cedear' ? 'equity' : p.clase_activo;
+    a.clase_por_usd.set(cNorm, (a.clase_por_usd.get(cNorm) ?? 0) + v);
     if (!a.ticker && p.ticker) a.ticker = p.ticker;
   }
   const rows: InstrumentGroupRow[] = [];

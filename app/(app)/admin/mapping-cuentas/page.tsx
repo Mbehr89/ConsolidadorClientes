@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { read, utils } from 'xlsx';
+import { read, utils, writeFile } from 'xlsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -208,6 +208,14 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
   return out;
 }
 
+function localDateYmd(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function MappingCuentasPage() {
   const { state } = useConsolidation();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -345,6 +353,19 @@ export default function MappingCuentasPage() {
   const updateRow = useCallback((id: string, patch: Partial<Pick<MappingRow, 'broker' | 'cuenta' | 'titular' | 'productor' | 'advisor'>>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, []);
+
+  const exportBackup = useCallback(() => {
+    const dataRows = rows.filter((r) => r.cuenta.trim().length > 0);
+    const aoa: string[][] = [
+      ['broker', 'cuenta', 'titular', 'productor', 'advisor'],
+      ...dataRows.map((r) => [r.broker, r.cuenta, r.titular, r.productor, r.advisor]),
+    ];
+    const ws = utils.aoa_to_sheet(aoa);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, 'mapping');
+    const name = `mapping_cuentas_backup_${localDateYmd()}.xlsx`;
+    writeFile(wb, name, { bookType: 'xlsx', compression: true });
+  }, [rows]);
 
   const save = useCallback(async () => {
     setError(null);
@@ -491,9 +512,21 @@ export default function MappingCuentasPage() {
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
             <CardTitle className="text-lg">Mapping actual</CardTitle>
-            <CardDescription>Editá filas o eliminá entradas. Guardá para persistir en config (KV / memoria en dev).</CardDescription>
+            <CardDescription>
+              Editá filas o eliminá entradas. Guardá para persistir en config (KV / memoria en dev). Exportar backup descarga un Excel
+              compatible con &quot;Importar Excel&quot; (incluye la grilla actual aunque no hayas guardado).
+            </CardDescription>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={exportBackup}
+              disabled={loading || totalAccounts === 0}
+              title="Descarga un .xlsx con el mismo formato que la importación (incluye cambios aún no guardados)"
+            >
+              Exportar backup
+            </Button>
             <Button type="button" variant="outline" onClick={addRow}>
               Agregar fila
             </Button>

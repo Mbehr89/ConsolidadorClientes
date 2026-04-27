@@ -501,7 +501,7 @@
   },
   "GGAL": {
     "pais": "AR",
-    "clase": "cedear",
+    "clase": "equity",
     "es_etf": false,
     "nombre": "GGAL",
     "confirmado": true,
@@ -511,7 +511,7 @@
   },
   "YPF": {
     "pais": "AR",
-    "clase": "cedear",
+    "clase": "equity",
     "es_etf": false,
     "nombre": "YPF",
     "confirmado": true,
@@ -521,7 +521,7 @@
   },
   "PAM": {
     "pais": "AR",
-    "clase": "cedear",
+    "clase": "equity",
     "es_etf": false,
     "nombre": "PAM",
     "confirmado": true,
@@ -531,7 +531,7 @@
   },
   "VIST": {
     "pais": "MX",
-    "clase": "cedear",
+    "clase": "equity",
     "es_etf": false,
     "nombre": "VIST",
     "confirmado": true,

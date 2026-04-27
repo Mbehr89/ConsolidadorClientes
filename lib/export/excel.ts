@@ -5,6 +5,7 @@ import type { BrokerCode, Position } from '@/lib/schema';
 import { aggregateByField, monedaDimensionKey, totalAumUsd } from '@/lib/analysis/exposure';
 import { detectInconsistencies } from '@/lib/analysis/inconsistencies';
 import { buildClienteSummaries } from '@/lib/views/cliente-summary';
+import type { BondFlowViewMode } from '@/lib/bonds/flow-regime';
 
 const { utils, writeFile } = XLSX;
 
@@ -13,6 +14,15 @@ export interface ExportOptions {
   filename?: string;
   /** Si es false, no se agrega la hoja Inconsistencias. Default: true cuando hay hallazgos. */
   includeInconsistencies?: boolean;
+  /**
+   * `standard`: hojas Resumen / Posiciones / Por Cliente (SheetJS).
+   * `portfolio`: libro multi-hoja con formato (ExcelJS), similar a un informe “master”.
+   */
+  layout?: 'standard' | 'portfolio';
+  /** Tipo de cambio USD/ARS. Si informás, el informe portfolio Completa columnas en ARS (USD×TC). */
+  fxUsdArs?: number | null;
+  /** Con calendario en doble ley (general + AFIP), elige qué rama mostrar en la hoja Flujo_Bonos. */
+  bondFlowViewMode?: BondFlowViewMode;
 }
 
 const HEADER_STYLE: NonNullable<CellObject['s']> = {
@@ -305,7 +315,17 @@ function buildInconsistenciasSheet(positions: Position[]): WorkSheet {
   return ws;
 }
 
-export function exportToExcel(positions: Position[], options?: ExportOptions): void {
+export async function exportToExcel(positions: Position[], options?: ExportOptions): Promise<void> {
+  if (options?.layout === 'portfolio') {
+    const { exportPortfolioWorkbook } = await import('./portfolio-exceljs');
+    await exportPortfolioWorkbook(positions, {
+      filename: options.filename,
+      fxUsdArs: options.fxUsdArs,
+      bondFlowViewMode: options.bondFlowViewMode,
+    });
+    return;
+  }
+
   const name = options?.filename ?? `consolidado_${localDateYmd()}.xlsx`;
   const fname = name.endsWith('.xlsx') ? name : `${name}.xlsx`;
 

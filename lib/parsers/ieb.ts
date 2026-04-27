@@ -18,6 +18,7 @@ import type { Position, ParseError, ParseResult, DetectResult } from '../schema'
 import { WARNING_CODES } from '../schema';
 import { normalizeTitular, generateClienteIdSync } from '../matching';
 import { parseNumeric } from '../fx';
+import { applyConfirmedGlossaryToPosition, lookupTickerMeta } from './ticker-glossary';
 
 // ─── Constants ──────────────────────────────────────────
 
@@ -317,13 +318,14 @@ function parseRow(
 
   // ─── Pais emisor ───
   const effectiveTicker = ticker && !CASH_TICKERS.has(normalizeIebCashToken(ticker)) ? ticker : null;
+  const metaGlossary = lookupTickerMeta(opts.tickers_metadata, effectiveTicker);
   let paisEmisor: string | null = null;
-  if (effectiveTicker && opts.tickers_metadata?.[effectiveTicker]) {
-    paisEmisor = opts.tickers_metadata[effectiveTicker]!.pais;
+  if (metaGlossary) {
+    paisEmisor = metaGlossary.pais;
   }
 
   // ─── Ticker no confirmado ───
-  if (effectiveTicker && opts.tickers_metadata && !opts.tickers_metadata[effectiveTicker]?.confirmado) {
+  if (effectiveTicker && opts.tickers_metadata && !metaGlossary?.confirmado) {
     posWarnings.push(WARNING_CODES.TICKER_NO_CONFIRMADO);
   }
 
@@ -379,7 +381,7 @@ function parseRow(
     warnings: posWarnings,
   };
 
-  return position;
+  return applyConfirmedGlossaryToPosition(position, metaGlossary);
 }
 
 function inferPriceScaleFactor(cantidad: number, precio: number, importe: number): number {
@@ -446,7 +448,7 @@ function classifyAsset(
     const isCedear = /CEDEAR\s/i.test(descripcion);
 
     // Check tickers metadata for ETF
-    const meta = opts.tickers_metadata?.[ticker];
+    const meta = lookupTickerMeta(opts.tickers_metadata, ticker);
     if (meta?.es_etf) {
       return {
         clase: 'etf',
@@ -457,7 +459,7 @@ function classifyAsset(
     }
 
     if (isCedear) {
-      return { clase: 'cedear', formaLegal: 'cedear', monedaSubtipo: null, warnings };
+      return { clase: 'equity', formaLegal: 'cedear', monedaSubtipo: null, warnings };
     }
 
     // Local AR equity

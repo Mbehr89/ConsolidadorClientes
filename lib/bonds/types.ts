@@ -1,6 +1,9 @@
 /**
  * Tipos alineados con BOND_PAYMENTS_ENGINE_README.md
  */
+/** Impuesto: calendario puede traer el mismo pago bajo ley general o bajo Régimen AFIP (doble fila / columna). */
+export type BondFlowRegime = 'afip' | 'normal';
+
 export interface BondPaymentEvent {
   asset: string;
   /** Emisor (ej. columna B en planilla tipo “Base Emisor”). */
@@ -11,6 +14,11 @@ export interface BondPaymentEvent {
   couponPer100?: number;
   amortizationPer100?: number;
   residualPctOfPar?: number;
+  /**
+   * Régimen de flujo (AFIP vs ley general). Si el CSV duplica bono+fecha, una fila debería ser `normal` y otra `afip`.
+   * Sin etiqueta, el parser intenta columna, texto en el ticker, o el orden (1ª=general, 2ª=AFIP) cuando hay exactamente 2 filas.
+   */
+  flowRegime?: BondFlowRegime;
 }
 
 export interface BondYieldMetrics {

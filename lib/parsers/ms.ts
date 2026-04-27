@@ -29,6 +29,7 @@ import {
 } from '../matching';
 import { extractMsReportDate, parseNumeric } from '../fx';
 import { isChecksumOk } from '../errors';
+import { applyConfirmedGlossaryToPosition, lookupTickerMeta } from './ticker-glossary';
 
 // ─── Constants ──────────────────────────────────────────
 
@@ -300,14 +301,16 @@ function parseRow(
     : null;
   const finalTicker = effectiveSymbol ?? syntheticTicker;
 
+  const metaGlossary = lookupTickerMeta(opts.tickers_metadata, finalTicker);
+
   // ─── Pais emisor ───
   let paisEmisor: string | null = null;
-  if (finalTicker && opts.tickers_metadata?.[finalTicker]) {
-    paisEmisor = opts.tickers_metadata[finalTicker]!.pais;
+  if (metaGlossary) {
+    paisEmisor = metaGlossary.pais;
   }
 
   // ─── Ticker no confirmado ───
-  if (finalTicker && opts.tickers_metadata && !opts.tickers_metadata[finalTicker]?.confirmado) {
+  if (finalTicker && opts.tickers_metadata && !metaGlossary?.confirmado) {
     posWarnings.push(WARNING_CODES.TICKER_NO_CONFIRMADO);
   }
 
@@ -350,7 +353,7 @@ function parseRow(
     warnings: posWarnings,
   };
 
-  return position;
+  return applyConfirmedGlossaryToPosition(position, metaGlossary);
 }
 
 
@@ -386,7 +389,7 @@ function classifyAsset(
     }
 
     // Check tickers metadata for ETF override (for stocks that are actually ETFs)
-    if (clase === 'equity' && opts.tickers_metadata?.[symbol]?.es_etf) {
+    if (clase === 'equity' && lookupTickerMeta(opts.tickers_metadata, symbol)?.es_etf) {
       clase = 'etf';
     }
 

@@ -172,10 +172,9 @@ function normalizeCashToken(value: string): string {
 
 const CLASE_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'Todas las clases' },
-  { value: 'equity', label: 'Equity' },
+  { value: 'equity', label: 'Equity (incl. CEDEAR)' },
   { value: 'bond', label: 'Bond' },
   { value: 'etf', label: 'ETF' },
-  { value: 'cedear', label: 'CEDEAR' },
   { value: 'cash', label: 'Cash' },
   { value: 'fund', label: 'Fund' },
   { value: 'on', label: 'ON' },

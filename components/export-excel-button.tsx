@@ -29,7 +29,7 @@ export function ExportExcelButton({
       size={size}
       className={className}
       disabled={disabled || positions.length === 0}
-      onClick={() => exportToExcel(positions, options)}
+      onClick={() => void exportToExcel(positions, options)}
     >
       {label}
     </Button>

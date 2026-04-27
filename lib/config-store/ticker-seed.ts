@@ -106,7 +106,7 @@ export function buildTickerSeed(): TickersMetadataStore {
     ['PAM', 'AR'],
     ['VIST', 'MX'],
   ] as const;
-  for (const [s, p] of cedearOff) add(out, s, p, 'cedear', false);
+  for (const [s, p] of cedearOff) add(out, s, p, 'equity', false);
 
   const bonosAr = [
     'AL30',
