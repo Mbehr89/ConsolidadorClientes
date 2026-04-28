@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { brokerColorClass, formatCompact, formatCurrency, formatPct, titularTipoClass } from '@/lib/utils';
 import { BROKERS } from '@/lib/brokers';
-import type { Position } from '@/lib/schema';
+import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
 import {
@@ -32,6 +32,7 @@ export default function ClienteDetailPage() {
   const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
   const [sortBy, setSortBy] = useState<'valor_usd' | 'pct_portfolio' | 'clase'>('valor_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [selectedClasses, setSelectedClasses] = useState<ClaseActivo[]>([]);
   const [cashExpanded, setCashExpanded] = useState(false);
   const [flowPdfSections, setFlowPdfSections] = useState({
     monthlyByBond: true,
@@ -79,6 +80,26 @@ export default function ClienteDetailPage() {
 
   // Warnings
   const allWarnings = positions.flatMap(p => p.warnings.map(w => ({ warning: w, ticker: p.ticker, broker: p.broker })));
+  const classesInPositions = useMemo<ClaseActivo[]>(
+    () => [...new Set(positions.map((p) => p.clase_activo))].sort((a, b) => a.localeCompare(b)),
+    [positions]
+  );
+  const classCounts = useMemo(() => {
+    return positions.reduce<Record<string, number>>((acc, p) => {
+      acc[p.clase_activo] = (acc[p.clase_activo] ?? 0) + 1;
+      return acc;
+    }, {});
+  }, [positions]);
+  const selectedClassSet = useMemo(() => new Set(selectedClasses), [selectedClasses]);
+
+  useEffect(() => {
+    setSelectedClasses((prev) => {
+      if (classesInPositions.length === 0) return [];
+      if (prev.length === 0) return classesInPositions;
+      const next = prev.filter((c) => classesInPositions.includes(c));
+      return next.length > 0 ? next : classesInPositions;
+    });
+  }, [classesInPositions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -320,17 +341,17 @@ export default function ClienteDetailPage() {
   }, [mappedBondFlows]);
 
   const sortedCashPositions = useMemo(() => {
-    const list = positions.filter((p) => isCashLike(p));
+    const list = positions.filter((p) => isCashLike(p) && selectedClassSet.has(p.clase_activo));
     list.sort((a, b) => {
       const cashCmp = getCashBucketLabel(a).localeCompare(getCashBucketLabel(b));
       if (cashCmp !== 0) return cashCmp;
       return (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0);
     });
     return list;
-  }, [positions]);
+  }, [positions, selectedClassSet]);
 
   const sortedNonCashPositions = useMemo(() => {
-    const list = positions.filter((p) => !isCashLike(p));
+    const list = positions.filter((p) => !isCashLike(p) && selectedClassSet.has(p.clase_activo));
     list.sort((a, b) => {
       let cmp = 0;
       if (sortBy === 'clase') {
@@ -345,7 +366,7 @@ export default function ClienteDetailPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [positions, sortBy, sortDir, totalUsd]);
+  }, [positions, selectedClassSet, sortBy, sortDir, totalUsd]);
 
   const cashTotals = useMemo(() => {
     const count = sortedCashPositions.length;
@@ -353,6 +374,7 @@ export default function ClienteDetailPage() {
     const ars = sortedCashPositions.reduce((s, p) => s + getArsValuationNumber(p), 0);
     return { count, usd, ars };
   }, [sortedCashPositions]);
+  const visiblePositionsCount = sortedCashPositions.length + sortedNonCashPositions.length;
 
   if (!state.hasParsed) {
     return (
@@ -479,7 +501,11 @@ export default function ClienteDetailPage() {
 
       {/* All positions */}
       <Card>
-        <CardHeader><CardTitle className="text-lg">Todas las posiciones ({positions.length})</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-lg">
+            Todas las posiciones ({visiblePositionsCount} visibles de {positions.length})
+          </CardTitle>
+        </CardHeader>
         <CardContent>
           <div className="mb-3 flex flex-wrap items-end gap-3">
             <div>
@@ -504,6 +530,43 @@ export default function ClienteDetailPage() {
                 <option value="desc">Descendente</option>
                 <option value="asc">Ascendente</option>
               </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Clases visibles</label>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={selectedClasses.length === classesInPositions.length ? 'default' : 'outline'}
+                  className={
+                    selectedClasses.length === classesInPositions.length
+                      ? 'bg-slate-900 text-white hover:bg-slate-800'
+                      : undefined
+                  }
+                  onClick={() => setSelectedClasses(classesInPositions)}
+                >
+                  Todas
+                </Button>
+                {classesInPositions.map((clase) => {
+                  const active = selectedClassSet.has(clase);
+                  return (
+                    <Button
+                      key={clase}
+                      type="button"
+                      size="sm"
+                      variant={active ? 'default' : 'outline'}
+                      className={active ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined}
+                      onClick={() =>
+                        setSelectedClasses((prev) =>
+                          prev.includes(clase) ? prev.filter((c) => c !== clase) : [...prev, clase]
+                        )
+                      }
+                    >
+                      {clase} ({classCounts[clase] ?? 0})
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           <div className="overflow-auto max-h-[500px]">

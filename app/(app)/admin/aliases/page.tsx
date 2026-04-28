@@ -20,7 +20,7 @@ import type { AliasEntry, AliasStore } from '@/lib/config-store/types';
 import { AdminOnly } from '@/components/admin-only';
 
 export default function AliasesPage() {
-  const { state } = useConsolidation();
+  const { state, parseAll } = useConsolidation();
   const [aliases, setAliases] = useState<AliasStore>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28,6 +28,9 @@ export default function AliasesPage() {
   const [ignoredTick, setIgnoredTick] = useState(0);
   const [manualVariante, setManualVariante] = useState('');
   const [manualCanonico, setManualCanonico] = useState('');
+  const [accountSearch, setAccountSearch] = useState('');
+  const [bulkCanonico, setBulkCanonico] = useState('');
+  const [selectedAccountKeys, setSelectedAccountKeys] = useState<string[]>([]);
   const [mergePair, setMergePair] = useState<AliasCandidatePair | null>(null);
 
   const load = useCallback(async () => {
@@ -58,6 +61,11 @@ export default function AliasesPage() {
     setAliases(next);
   }, []);
 
+  const reparseIfNeeded = useCallback(async (aliasesOverride?: AliasStore) => {
+    if (state.files.length === 0) return;
+    await parseAll(aliasesOverride);
+  }, [state.files.length, parseAll]);
+
   const candidates = useMemo(() => {
     if (!state.allPositions.length) return [];
     // Fuerza recálculo cuando se ignora un par.
@@ -86,7 +94,9 @@ export default function AliasesPage() {
           creado_por: 'admin',
           fecha: new Date().toISOString(),
         };
-        await persistAliases([...aliases, entry]);
+        const next = [...aliases, entry];
+        await persistAliases(next);
+        await reparseIfNeeded(next);
         setMergePair(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error');
@@ -94,7 +104,7 @@ export default function AliasesPage() {
         setSaving(false);
       }
     },
-    [mergePair, aliases, persistAliases]
+    [mergePair, aliases, persistAliases, reparseIfNeeded]
   );
 
   const removeAlias = useCallback(
@@ -102,14 +112,16 @@ export default function AliasesPage() {
       setSaving(true);
       setError(null);
       try {
-        await persistAliases(aliases.filter((a) => a.variante !== variante));
+        const next = aliases.filter((a) => a.variante !== variante);
+        await persistAliases(next);
+        await reparseIfNeeded(next);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error');
       } finally {
         setSaving(false);
       }
     },
-    [aliases, persistAliases]
+    [aliases, persistAliases, reparseIfNeeded]
   );
 
   const addManual = useCallback(async () => {
@@ -135,6 +147,7 @@ export default function AliasesPage() {
       const exists = aliases.some((a) => a.variante === v);
       const next = exists ? aliases.map((a) => (a.variante === v ? entry : a)) : [...aliases, entry];
       await persistAliases(next);
+      await reparseIfNeeded(next);
       setManualVariante('');
       setManualCanonico('');
     } catch (e) {
@@ -142,7 +155,88 @@ export default function AliasesPage() {
     } finally {
       setSaving(false);
     }
-  }, [manualVariante, manualCanonico, aliases, persistAliases]);
+  }, [manualVariante, manualCanonico, aliases, persistAliases, reparseIfNeeded]);
+
+  const accountMatches = useMemo(() => {
+    const q = accountSearch.trim().toLowerCase();
+    if (!q) return [];
+    const grouped = new Map<
+      string,
+      {
+        key: string;
+        broker: string;
+        cuenta: string;
+        titular: string;
+        titularNormalizado: string;
+        posiciones: number;
+        aumUsd: number;
+      }
+    >();
+    for (const p of state.allPositions) {
+      const haystack = `${p.titular} ${p.titular_normalizado} ${p.cuenta}`.toLowerCase();
+      if (!haystack.includes(q)) continue;
+      const key = `${p.broker}|${p.cuenta}|${p.titular_normalizado}`;
+      const curr = grouped.get(key);
+      if (curr) {
+        curr.posiciones += 1;
+        curr.aumUsd += p.valor_mercado_usd ?? 0;
+      } else {
+        grouped.set(key, {
+          key,
+          broker: p.broker,
+          cuenta: p.cuenta,
+          titular: p.titular,
+          titularNormalizado: p.titular_normalizado,
+          posiciones: 1,
+          aumUsd: p.valor_mercado_usd ?? 0,
+        });
+      }
+    }
+    return [...grouped.values()].sort((a, b) => b.aumUsd - a.aumUsd);
+  }, [state.allPositions, accountSearch]);
+
+  const addFromSelectedAccounts = useCallback(async () => {
+    const c = normalizeTitular(bulkCanonico.trim()).normalizado;
+    if (!c) {
+      setError('Completá el canónico para unificación por cuentas');
+      return;
+    }
+    if (selectedAccountKeys.length === 0) {
+      setError('Seleccioná al menos una cuenta');
+      return;
+    }
+    const selected = accountMatches.filter((m) => selectedAccountKeys.includes(m.key));
+    const variantes = [...new Set(selected.map((m) => m.titularNormalizado))].filter((v) => v !== c);
+    if (variantes.length === 0) {
+      setError('No hay variantes distintas al canónico seleccionado');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const ts = new Date().toISOString();
+      const byVariante = new Map(aliases.map((a) => [a.variante, a] as const));
+      for (const variante of variantes) {
+        const entry: AliasEntry = {
+          variante,
+          canonico: c,
+          creado_por: 'admin',
+          fecha: ts,
+        };
+        byVariante.set(variante, entry);
+      }
+      const next = [...byVariante.values()];
+      await persistAliases(next);
+      await reparseIfNeeded(next);
+      setSelectedAccountKeys([]);
+      setBulkCanonico('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setSaving(false);
+    }
+  }, [bulkCanonico, selectedAccountKeys, accountMatches, aliases, persistAliases, reparseIfNeeded]);
 
   return (
     <AdminOnly>
@@ -239,6 +333,114 @@ export default function AliasesPage() {
           <CardDescription>Variante → canónico persistidos en config</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="space-y-3 rounded-md border p-3">
+            <p className="text-sm font-medium">Unificar por búsqueda de cuentas</p>
+            <p className="text-xs text-muted-foreground">
+              Escribí parte del nombre (o cuenta), seleccioná las cuentas y definí un canónico único.
+            </p>
+            <div className="flex flex-wrap gap-2 items-end">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Buscar nombre / cuenta</label>
+                <input
+                  className="h-9 w-72 rounded-md border bg-background px-2 text-sm"
+                  value={accountSearch}
+                  onChange={(e) => {
+                    setAccountSearch(e.target.value);
+                    setSelectedAccountKeys([]);
+                  }}
+                  placeholder="ej. MARTIN o 001-123456"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Canónico final</label>
+                <input
+                  className="h-9 w-64 rounded-md border bg-background px-2 text-sm font-mono"
+                  value={bulkCanonico}
+                  onChange={(e) => setBulkCanonico(e.target.value)}
+                  placeholder="ej. MARTIN GONI"
+                />
+              </div>
+              <Button type="button" disabled={saving} onClick={() => void addFromSelectedAccounts()}>
+                Guardar aliases de seleccionados
+              </Button>
+            </div>
+
+            {accountSearch.trim().length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {accountMatches.length} cuenta{accountMatches.length === 1 ? '' : 's'} encontrada
+                    {accountMatches.length === 1 ? '' : 's'} · {selectedAccountKeys.length} seleccionada
+                    {selectedAccountKeys.length === 1 ? '' : 's'}
+                  </p>
+                  {accountMatches.length > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setSelectedAccountKeys((prev) =>
+                          prev.length === accountMatches.length ? [] : accountMatches.map((m) => m.key)
+                        )
+                      }
+                    >
+                      {selectedAccountKeys.length === accountMatches.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                    </Button>
+                  )}
+                </div>
+                <div className="overflow-auto border rounded-md max-h-[260px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-card border-b">
+                      <tr>
+                        <th className="text-left p-2 text-xs font-medium">Sel</th>
+                        <th className="text-left p-2 text-xs font-medium">Titular</th>
+                        <th className="text-left p-2 text-xs font-medium">Normalizado</th>
+                        <th className="text-left p-2 text-xs font-medium">Broker</th>
+                        <th className="text-left p-2 text-xs font-medium">Cuenta</th>
+                        <th className="text-right p-2 text-xs font-medium">Posiciones</th>
+                        <th className="text-right p-2 text-xs font-medium">AUM USD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountMatches.length === 0 ? (
+                        <tr>
+                          <td className="p-3 text-sm text-muted-foreground" colSpan={7}>
+                            Sin resultados para la búsqueda.
+                          </td>
+                        </tr>
+                      ) : (
+                        accountMatches.map((m) => {
+                          const checked = selectedAccountKeys.includes(m.key);
+                          return (
+                            <tr key={m.key} className="border-b border-border/30">
+                              <td className="p-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) =>
+                                    setSelectedAccountKeys((prev) =>
+                                      e.target.checked ? [...prev, m.key] : prev.filter((k) => k !== m.key)
+                                    )
+                                  }
+                                />
+                              </td>
+                              <td className="p-2 text-xs">{m.titular}</td>
+                              <td className="p-2 text-xs font-mono">{m.titularNormalizado}</td>
+                              <td className="p-2 text-xs">{m.broker}</td>
+                              <td className="p-2 text-xs font-mono">{m.cuenta}</td>
+                              <td className="p-2 text-right font-mono text-xs">{m.posiciones}</td>
+                              <td className="p-2 text-right font-mono text-xs">{m.aumUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-2 items-end">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Variante</label>

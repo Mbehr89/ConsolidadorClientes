@@ -505,66 +505,68 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
           <td colSpan={9} className="p-0">
             <div className="p-4">
               <p className="text-xs font-medium text-muted-foreground mb-2 uppercase">Tenedores de {activo.ticker}</p>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-1.5 font-medium text-muted-foreground">Titular</th>
-                    <th className="text-left p-1.5 font-medium text-muted-foreground">Broker</th>
-                    <th className="text-left p-1.5 font-medium text-muted-foreground">Cuenta</th>
-                    {!isCash && <th className="text-right p-1.5 font-medium text-muted-foreground">Cantidad</th>}
-                    {isCash &&
-                      visibleCashBuckets.map(({ key, label }) => (
-                        <th key={key} className="text-right p-1.5 font-medium text-muted-foreground whitespace-nowrap">
-                          {label}
-                        </th>
-                      ))}
-                    <th className="text-right p-1.5 font-medium text-muted-foreground">Valor USD</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isCash
-                    ? cashRowsByClient.map((r, i) => (
-                        <tr key={`${r.cliente_id}-${i}`} className="border-b border-border/30">
-                          <td className="p-1.5">
-                            <Link href={`/clientes/${r.cliente_id}`} className="text-primary hover:underline">{r.titular}</Link>
-                          </td>
-                          <td className="p-1.5 text-muted-foreground">{r.brokerLabel}</td>
-                          <td className="p-1.5 font-mono text-muted-foreground">{r.cuentaLabel}</td>
-                          {visibleCashBuckets.map(({ key }) => (
-                            <td key={key} className="p-1.5 text-right font-mono">
-                              {r.byBucket[key] != null ? formatCashBucketAmount(key, r.byBucket[key] ?? 0) : '—'}
-                            </td>
-                          ))}
-                          <td className="p-1.5 text-right font-mono">{formatCurrency(r.total_usd)}</td>
-                        </tr>
-                      ))
-                    : activo.titulares
-                        .sort((a, b) => b.valor_usd - a.valor_usd)
-                        .map((t, i) => (
-                          <tr key={i} className="border-b border-border/30">
-                            <td className="p-1.5">
-                              <Link href={`/clientes/${t.cliente_id}`} className="text-primary hover:underline">{t.titular}</Link>
-                            </td>
-                            <td className="p-1.5 text-muted-foreground">{t.broker}</td>
-                            <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
-                            <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
-                          </tr>
+              <div className="max-h-[380px] overflow-auto rounded-md border border-border/50">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80">
+                    <tr className="border-b">
+                      <th className="text-left p-1.5 font-medium text-muted-foreground">Titular</th>
+                      <th className="text-left p-1.5 font-medium text-muted-foreground">Broker</th>
+                      <th className="text-left p-1.5 font-medium text-muted-foreground">Cuenta</th>
+                      {!isCash && <th className="text-right p-1.5 font-medium text-muted-foreground">Cantidad</th>}
+                      {isCash &&
+                        visibleCashBuckets.map(({ key, label }) => (
+                          <th key={key} className="text-right p-1.5 font-medium text-muted-foreground whitespace-nowrap">
+                            {label}
+                          </th>
                         ))}
-                  {isCash && (
-                    <tr className="border-t-2 border-border font-medium bg-muted/20">
-                      <td className="p-1.5">Subtotal</td>
-                      <td className="p-1.5" />
-                      <td className="p-1.5" />
-                      {visibleCashBuckets.map(({ key }) => (
-                        <td key={key} className="p-1.5 text-right font-mono">
-                          {formatCashBucketAmount(key, subtotalByBucket[key] ?? 0)}
-                        </td>
-                      ))}
-                      <td className="p-1.5 text-right font-mono">{formatCurrency(activo.total_usd)}</td>
+                      <th className="text-right p-1.5 font-medium text-muted-foreground">Valor USD</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {isCash
+                      ? cashRowsByClient.map((r, i) => (
+                          <tr key={`${r.cliente_id}-${i}`} className="border-b border-border/30">
+                            <td className="p-1.5">
+                              <Link href={`/clientes/${r.cliente_id}`} className="text-primary hover:underline">{r.titular}</Link>
+                            </td>
+                            <td className="p-1.5 text-muted-foreground">{r.brokerLabel}</td>
+                            <td className="p-1.5 font-mono text-muted-foreground">{r.cuentaLabel}</td>
+                            {visibleCashBuckets.map(({ key }) => (
+                              <td key={key} className="p-1.5 text-right font-mono">
+                                {r.byBucket[key] != null ? formatCashBucketAmount(key, r.byBucket[key] ?? 0) : '—'}
+                              </td>
+                            ))}
+                            <td className="p-1.5 text-right font-mono">{formatCurrency(r.total_usd)}</td>
+                          </tr>
+                        ))
+                      : activo.titulares
+                          .sort((a, b) => b.valor_usd - a.valor_usd)
+                          .map((t, i) => (
+                            <tr key={i} className="border-b border-border/30">
+                              <td className="p-1.5">
+                                <Link href={`/clientes/${t.cliente_id}`} className="text-primary hover:underline">{t.titular}</Link>
+                              </td>
+                              <td className="p-1.5 text-muted-foreground">{t.broker}</td>
+                              <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
+                              <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
+                            </tr>
+                          ))}
+                    {isCash && (
+                      <tr className="border-t-2 border-border font-medium bg-muted/20">
+                        <td className="p-1.5">Subtotal</td>
+                        <td className="p-1.5" />
+                        <td className="p-1.5" />
+                        {visibleCashBuckets.map(({ key }) => (
+                          <td key={key} className="p-1.5 text-right font-mono">
+                            {formatCashBucketAmount(key, subtotalByBucket[key] ?? 0)}
+                          </td>
+                        ))}
+                        <td className="p-1.5 text-right font-mono">{formatCurrency(activo.total_usd)}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </td>
         </tr>

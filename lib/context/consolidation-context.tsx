@@ -57,7 +57,7 @@ interface ConsolidationContextValue {
   removeFile: (index: number) => void;
   setFxManual: (fx: number) => void;
   setFechaIeb: (fecha: string) => void;
-  parseAll: () => Promise<void>;
+  parseAll: (aliasesOverride?: AliasStore) => Promise<void>;
   /** Recarga grupos desde el servidor y re-asigna `grupo_id` sin re-parsear Excel. */
   refreshGruposAssignment: () => Promise<void>;
   reset: () => void;
@@ -273,7 +273,7 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, fechaIeb: fecha }));
   }, []);
 
-  const parseAll = useCallback(async () => {
+  const parseAll = useCallback(async (aliasesOverride?: AliasStore) => {
     setState((prev) => ({ ...prev, isProcessing: true }));
     const snapshot = stateRef.current;
 
@@ -302,8 +302,9 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
       /* fetch opcional */
     }
 
+    const effectiveAliasesStore = aliasesOverride ?? aliasesStore;
     const parserTickerMeta = mapTickersMetadataForParser(tickersMeta);
-    const aliasRecord = aliasStoreToRecord(aliasesStore);
+    const aliasRecord = aliasStoreToRecord(effectiveAliasesStore);
 
     const files = snapshot.files.map((entry) => {
       if (!entry.broker || entry.status === 'error') return entry;
