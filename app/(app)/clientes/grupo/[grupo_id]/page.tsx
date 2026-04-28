@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { brokerColorClass, formatCompact, formatCurrency, formatPct } from '@/lib/utils';
 import { BROKERS } from '@/lib/brokers';
-import type { Position } from '@/lib/schema';
+import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
 import {
@@ -32,6 +32,8 @@ export default function GrupoDetailPage() {
   const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
   const [sortBy, setSortBy] = useState<'valor_usd' | 'pct_portfolio' | 'clase'>('valor_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [selectedClasses, setSelectedClasses] = useState<ClaseActivo[]>([]);
+  const [selectedCuentas, setSelectedCuentas] = useState<string[]>([]);
   const [flowPdfSections, setFlowPdfSections] = useState({
     monthlyByBond: true,
     annualDualAxis: true,
@@ -83,6 +85,40 @@ export default function GrupoDetailPage() {
   );
 
   const miembros = grupo?.cliente_ids ?? [...new Set(positions.map((p) => p.cliente_id))];
+  const classesInPositions = useMemo<ClaseActivo[]>(
+    () => [...new Set(positions.map((p) => p.clase_activo))].sort((a, b) => a.localeCompare(b)),
+    [positions]
+  );
+  const classCounts = useMemo(() => {
+    return positions.reduce<Record<string, number>>((acc, p) => {
+      acc[p.clase_activo] = (acc[p.clase_activo] ?? 0) + 1;
+      return acc;
+    }, {});
+  }, [positions]);
+  const selectedClassSet = useMemo(() => new Set(selectedClasses), [selectedClasses]);
+  const cuentasInPositions = useMemo(
+    () => [...new Set(positions.map((p) => p.cuenta))].sort((a, b) => a.localeCompare(b)),
+    [positions]
+  );
+  const selectedCuentaSet = useMemo(() => new Set(selectedCuentas), [selectedCuentas]);
+
+  useEffect(() => {
+    setSelectedClasses((prev) => {
+      if (classesInPositions.length === 0) return [];
+      if (prev.length === 0) return classesInPositions;
+      const next = prev.filter((c) => classesInPositions.includes(c));
+      return next.length > 0 ? next : classesInPositions;
+    });
+  }, [classesInPositions]);
+
+  useEffect(() => {
+    setSelectedCuentas((prev) => {
+      if (cuentasInPositions.length === 0) return [];
+      if (prev.length === 0) return cuentasInPositions;
+      const next = prev.filter((c) => cuentasInPositions.includes(c));
+      return next.length > 0 ? next : cuentasInPositions;
+    });
+  }, [cuentasInPositions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,7 +359,9 @@ export default function GrupoDetailPage() {
   }, [mappedBondFlows]);
 
   const sortedPositions = useMemo(() => {
-    const list = [...positions];
+    const list = positions.filter(
+      (p) => selectedClassSet.has(p.clase_activo) && selectedCuentaSet.has(p.cuenta)
+    );
     list.sort((a, b) => {
       let cmp = 0;
       if (sortBy === 'clase') {
@@ -338,7 +376,7 @@ export default function GrupoDetailPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [positions, sortBy, sortDir, totalUsd]);
+  }, [positions, selectedClassSet, selectedCuentaSet, sortBy, sortDir, totalUsd]);
 
   if (!state.hasParsed) {
     return (
@@ -461,7 +499,9 @@ export default function GrupoDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Todas las posiciones ({positions.length})</CardTitle>
+          <CardTitle className="text-lg">
+            Todas las posiciones ({sortedPositions.length} visibles de {positions.length})
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="mb-3 flex flex-wrap items-end gap-3">
@@ -487,6 +527,80 @@ export default function GrupoDetailPage() {
                 <option value="desc">Descendente</option>
                 <option value="asc">Ascendente</option>
               </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Clases visibles</label>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={selectedClasses.length === classesInPositions.length ? 'default' : 'outline'}
+                  className={
+                    selectedClasses.length === classesInPositions.length
+                      ? 'bg-slate-900 text-white hover:bg-slate-800'
+                      : undefined
+                  }
+                  onClick={() => setSelectedClasses(classesInPositions)}
+                >
+                  Todas
+                </Button>
+                {classesInPositions.map((clase) => {
+                  const active = selectedClassSet.has(clase);
+                  return (
+                    <Button
+                      key={clase}
+                      type="button"
+                      size="sm"
+                      variant={active ? 'default' : 'outline'}
+                      className={active ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined}
+                      onClick={() =>
+                        setSelectedClasses((prev) =>
+                          prev.includes(clase) ? prev.filter((c) => c !== clase) : [...prev, clase]
+                        )
+                      }
+                    >
+                      {clase} ({classCounts[clase] ?? 0})
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Cuentas visibles</label>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={selectedCuentas.length === cuentasInPositions.length ? 'default' : 'outline'}
+                  className={
+                    selectedCuentas.length === cuentasInPositions.length
+                      ? 'bg-slate-900 text-white hover:bg-slate-800'
+                      : undefined
+                  }
+                  onClick={() => setSelectedCuentas(cuentasInPositions)}
+                >
+                  Todas
+                </Button>
+                {cuentasInPositions.map((cuenta) => {
+                  const active = selectedCuentaSet.has(cuenta);
+                  return (
+                    <Button
+                      key={cuenta}
+                      type="button"
+                      size="sm"
+                      variant={active ? 'default' : 'outline'}
+                      className={active ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined}
+                      onClick={() =>
+                        setSelectedCuentas((prev) =>
+                          prev.includes(cuenta) ? prev.filter((c) => c !== cuenta) : [...prev, cuenta]
+                        )
+                      }
+                    >
+                      {cuenta}
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           <div className="overflow-auto max-h-[500px]">
