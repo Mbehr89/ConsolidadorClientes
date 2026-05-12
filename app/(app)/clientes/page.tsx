@@ -25,7 +25,10 @@ export default function ClientesPage() {
   const [filterProductor, setFilterProductor] = useState<string>('all');
   const [filterAdvisor, setFilterAdvisor] = useState<string>('all');
 
-  const clients = useMemo(() => buildClienteSummaries(state.allPositions), [state.allPositions]);
+  const clients = useMemo(
+    () => buildClienteSummaries(state.allPositions, state.advisorsByCliente),
+    [state.allPositions, state.advisorsByCliente]
+  );
 
   const grupoView = useMemo(
     () => buildGrupoListRows(state.grupos, clients),
@@ -81,14 +84,25 @@ export default function ClientesPage() {
   }, [filtered, sortField, sortDir]);
 
   const filteredGrupos = useMemo(() => {
-    if (!search) return grupoView.grupos;
-    const q = search.toLowerCase();
-    return grupoView.grupos.filter(
-      (g) =>
-        g.nombre.toLowerCase().includes(q) ||
-        g.miembros.some((m) => m.titular.toLowerCase().includes(q) || m.cliente_id.includes(q))
-    );
-  }, [grupoView.grupos, search]);
+    let rows = grupoView.grupos;
+    if (search) {
+      const q = search.toLowerCase();
+      rows = rows.filter(
+        (g) =>
+          g.nombre.toLowerCase().includes(q) ||
+          g.miembros.some((m) => m.titular.toLowerCase().includes(q) || m.cliente_id.includes(q))
+      );
+    }
+    if (filterAdvisor !== 'all') {
+      rows = rows.filter((g) =>
+        g.miembros.some((m) => {
+          const c = clients.find((cc) => cc.cliente_id === m.cliente_id);
+          return (c?.advisor ?? '') === filterAdvisor;
+        })
+      );
+    }
+    return rows;
+  }, [grupoView.grupos, search, filterAdvisor, clients]);
 
   const sinGrupoFiltered = useMemo(() => {
     let rows = grupoView.sinGrupo;

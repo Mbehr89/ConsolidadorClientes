@@ -3,7 +3,7 @@
  * Los datos se derivan de `Position[]` del consolidador.
  */
 import ExcelJS from 'exceljs';
-import { BROKERS } from '@/lib/brokers';
+import { BROKERS, isOffshore } from '@/lib/brokers';
 import {
   buildPortfolioExportPayload,
   type ExportPortfolioOptions,
@@ -320,7 +320,12 @@ function buildBaseConsolidada(workbook: ExcelJS.Workbook, positions: Position[],
   let n = 0;
   for (const p of positions) {
     n += 1;
-    const arsAprox = tc != null && p.valor_mercado_usd != null ? p.valor_mercado_usd * tc : p.valor_mercado_local;
+    const arsAprox =
+      tc != null && p.valor_mercado_usd != null
+        ? p.valor_mercado_usd * tc
+        : isOffshore(p.broker)
+          ? ''
+          : p.valor_mercado_local;
     ws.addRow([
       n,
       p.broker,

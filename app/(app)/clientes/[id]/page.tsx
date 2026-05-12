@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { brokerColorClass, formatCompact, formatCurrency, formatPct, titularTipoClass } from '@/lib/utils';
-import { BROKERS } from '@/lib/brokers';
+import { BROKERS, isOffshore } from '@/lib/brokers';
 import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
@@ -77,6 +77,7 @@ export default function ClienteDetailPage() {
 
   // Cuentas
   const cuentas = [...new Set(positions.map(p => `${p.broker} — ${p.cuenta}`))];
+  const advisorLabel = (state.advisorsByCliente[clienteId] ?? '').trim();
 
   // Warnings
   const allWarnings = positions.flatMap(p => p.warnings.map(w => ({ warning: w, ticker: p.ticker, broker: p.broker })));
@@ -441,6 +442,11 @@ export default function ClienteDetailPage() {
         <p className="text-muted-foreground mt-1">
           {cuentas.length} cuenta{cuentas.length > 1 ? 's' : ''}: {cuentas.join(' · ')}
         </p>
+        {advisorLabel ? (
+          <p className="text-muted-foreground mt-1 text-sm">
+            Advisor (mapping cuentas): <span className="text-foreground font-medium">{advisorLabel}</span>
+          </p>
+        ) : null}
       </div>
 
       {/* KPIs */}
@@ -939,6 +945,7 @@ function aggregate(positions: Position[], keyFn: (p: Position) => string): Recor
 }
 
 function formatArsPrice(p: Position): string {
+  if (isOffshore(p.broker)) return '—';
   if (p.moneda === 'ARS' && p.precio_mercado != null && Number.isFinite(p.precio_mercado)) {
     return `${p.precio_mercado.toLocaleString('es-AR', {
       minimumFractionDigits: 2,
@@ -971,6 +978,7 @@ function formatUsdPrice(p: Position): string {
 }
 
 function formatArsValuation(p: Position): string {
+  if (isOffshore(p.broker)) return '—';
   const arsValue = getArsValuationNumber(p);
   if (arsValue == null || !Number.isFinite(arsValue)) return '—';
   return arsValue.toLocaleString('es-AR', {
@@ -982,6 +990,7 @@ function formatArsValuation(p: Position): string {
 }
 
 function getArsValuationNumber(p: Position): number {
+  if (isOffshore(p.broker)) return 0;
   if (Number.isFinite(p.valor_mercado_local) && p.valor_mercado_local > 0 && p.moneda === 'ARS') {
     return p.valor_mercado_local;
   }

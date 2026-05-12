@@ -96,9 +96,11 @@ export const PositionSchema = z.object({
   cantidad: z.number(),
   cantidad_disponible: z.number().nullable(),
   cantidad_no_disponible: z.number().nullable(),
+  /** En brokers offshore (MS, NETX360) es precio unitario en USD. */
   precio_mercado: z.number().nullable(),
   moneda: z.string().min(3).max(3), // ISO 4217
   moneda_subtipo: z.string().nullable(),
+  /** En offshore coincide con valuación USD (campo legacy “local” = mismo libro que USD). */
   valor_mercado_local: z.number(),
   valor_mercado_usd: z.number().nullable(),
   accrued_interest_usd: z.number().nullable(),

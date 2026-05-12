@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useConsolidation } from '@/lib/context/consolidation-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatCompact, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
 import type { Position, ClaseActivo } from '@/lib/schema';
+import type { BondPaymentEvent } from '@/lib/bonds/types';
+import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
+import { filterBondEventsByViewMode } from '@/lib/bonds/flow-regime';
+import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
+import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
 
 type CashBucketKey =
   | 'ars'
@@ -42,6 +47,8 @@ const IEB_CASH_TICKER_BUCKET_MAP: Record<string, CashBucketKey> = {
 };
 
 interface ActivoSummary {
+  /** Clave de agregación (coincide con la del consolidado por posición). */
+  aggKey: string;
   ticker: string;
   descripcion: string;
   clase_activo: ClaseActivo;
@@ -64,15 +71,20 @@ interface ActivoSummary {
   total_cantidad: number;
 }
 
+function positionAggKey(p: Position): string {
+  return p.ticker ?? `_${p.cusip ?? p.descripcion.slice(0, 30)}`;
+}
+
 function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
   const map = new Map<string, ActivoSummary>();
 
   for (const p of positions) {
-    const key = p.ticker ?? `_${p.cusip ?? p.descripcion.slice(0, 30)}`;
+    const key = positionAggKey(p);
 
     let activo = map.get(key);
     if (!activo) {
       activo = {
+        aggKey: key,
         ticker: p.ticker ?? '(sin ticker)',
         descripcion: p.descripcion,
         clase_activo: p.clase_activo,
@@ -194,15 +206,61 @@ const FORMA_OPTIONS: { value: string; label: string }[] = [
 
 const ALL_CASH_BUCKET_KEYS: CashBucketKey[] = CASH_BUCKET_DEFS.map(d => d.key);
 
+/** Misma metodología que en ficha cliente (precio sucio → `computeBondYieldMetrics`). */
+function computeBondYtmForPosition(
+  p: Position,
+  events: BondPaymentEvent[],
+  valuationDate: Date
+): number | null {
+  if (!(p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra')) return null;
+  if (!p.ticker) return null;
+  const nominal = Number.isFinite(p.cantidad) && p.cantidad > 0 ? p.cantidad : 100;
+  const fxFromPosition =
+    p.valor_mercado_usd != null && p.valor_mercado_usd > 0 && p.valor_mercado_local > 0
+      ? p.valor_mercado_local / p.valor_mercado_usd
+      : 1;
+  const usdArsFxRate = Number.isFinite(fxFromPosition) && fxFromPosition > 0 ? fxFromPosition : 1;
+  const unitPriceUsdFromStatement =
+    p.precio_mercado != null && Number.isFinite(p.precio_mercado)
+      ? p.moneda === 'USD'
+        ? p.precio_mercado
+        : p.precio_mercado / usdArsFxRate
+      : null;
+  const unitPriceUsdFromValuation =
+    nominal > 0 && p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd)
+      ? p.valor_mercado_usd / nominal
+      : null;
+  const unitPriceUsd = unitPriceUsdFromStatement ?? unitPriceUsdFromValuation;
+  if (unitPriceUsd == null || !Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) return null;
+  const dirtyPricePer100 = unitPriceUsd * 100;
+  const metrics = computeBondYieldMetrics(
+    events,
+    normalizeBondTicker(p.ticker),
+    valuationDate,
+    dirtyPricePer100,
+    nominal,
+    usdArsFxRate
+  );
+  const y = metrics.ytmAnnualEffective;
+  return y != null && Number.isFinite(y) ? y : null;
+}
+
+function formatTirCell(ytm: number | null | undefined): string {
+  if (ytm == null || !Number.isFinite(ytm)) return '—';
+  return `${(ytm * 100).toFixed(2)}%`;
+}
+
 export default function ActivosPage() {
   const { state } = useConsolidation();
+  const [bondEvents, setBondEvents] = useState<BondPaymentEvent[]>([]);
   const [search, setSearch] = useState('');
   const [filterClase, setFilterClase] = useState('all');
   const [filterForma, setFilterForma] = useState('all');
   const [filterBroker, setFilterBroker] = useState('all');
-  const [sortField, setSortField] = useState<'total_usd' | 'ticker' | 'titulares'>('total_usd');
+  const [filterAdvisor, setFilterAdvisor] = useState('all');
+  const [sortField, setSortField] = useState<'total_usd' | 'ticker' | 'titulares' | 'tir'>('total_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
+  const [expandedAggKey, setExpandedAggKey] = useState<string | null>(null);
   /** Columnas de efectivo visibles en la tabla de tenedores (multi-selección; por defecto todas). */
   const [cashColumnKeys, setCashColumnKeys] = useState<Set<CashBucketKey>>(
     () => new Set(ALL_CASH_BUCKET_KEYS)
@@ -224,7 +282,35 @@ export default function ActivosPage() {
 
   const selectAllCashColumns = () => setCashColumnKeys(new Set(ALL_CASH_BUCKET_KEYS));
 
-  const activos = useMemo(() => buildActivoSummaries(state.allPositions), [state.allPositions]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/bonds/calendar', { cache: 'no-store' });
+        const data = (await res.json()) as { events?: Array<Record<string, unknown>> };
+        if (!cancelled && data.events) setBondEvents(reviveBondEventsFromApi(data.events));
+      } catch {
+        if (!cancelled) setBondEvents([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const bondEventsView = useMemo(
+    () => filterBondEventsByViewMode(bondEvents, 'normal'),
+    [bondEvents]
+  );
+
+  const positionsForActivos = useMemo(() => {
+    if (filterAdvisor === 'all') return state.allPositions;
+    return state.allPositions.filter(
+      (p) => (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor
+    );
+  }, [state.allPositions, state.advisorsByCliente, filterAdvisor]);
+
+  const activos = useMemo(() => buildActivoSummaries(positionsForActivos), [positionsForActivos]);
 
   const filtered = useMemo(() => {
     let result = activos;
@@ -244,6 +330,25 @@ export default function ActivosPage() {
     return result;
   }, [activos, search, filterClase, filterForma, filterBroker]);
 
+  /** TIR por instrumento agregado (posición representativa = mayor valor USD). */
+  const bondYtmByAggKey = useMemo(() => {
+    const map = new Map<string, number | null>();
+    const now = new Date();
+    const valuationDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const byKey = new Map<string, Position>();
+    for (const p of positionsForActivos) {
+      if (!(p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra')) continue;
+      const k = positionAggKey(p);
+      const prev = byKey.get(k);
+      const usd = p.valor_mercado_usd ?? 0;
+      if (!prev || (prev.valor_mercado_usd ?? 0) < usd) byKey.set(k, p);
+    }
+    for (const [k, p] of byKey) {
+      map.set(k, computeBondYtmForPosition(p, bondEventsView, valuationDate));
+    }
+    return map;
+  }, [positionsForActivos, bondEventsView]);
+
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
       const aIsCash = a.clase_activo === 'cash' || a.ticker.toUpperCase() === 'CASH';
@@ -252,27 +357,59 @@ export default function ActivosPage() {
 
       let cmp = 0;
       switch (sortField) {
-        case 'total_usd': cmp = a.total_usd - b.total_usd; break;
-        case 'ticker': cmp = a.ticker.localeCompare(b.ticker); break;
-        case 'titulares': cmp = a.titulares.length - b.titulares.length; break;
+        case 'total_usd':
+          cmp = a.total_usd - b.total_usd;
+          break;
+        case 'ticker':
+          cmp = a.ticker.localeCompare(b.ticker);
+          break;
+        case 'titulares':
+          cmp = a.titulares.length - b.titulares.length;
+          break;
+        case 'tir': {
+          const avRaw = bondYtmByAggKey.get(a.aggKey);
+          const bvRaw = bondYtmByAggKey.get(b.aggKey);
+          const av = avRaw != null && Number.isFinite(avRaw) ? avRaw : null;
+          const bv = bvRaw != null && Number.isFinite(bvRaw) ? bvRaw : null;
+          if (av == null && bv == null) cmp = 0;
+          else if (av == null) cmp = 1;
+          else if (bv == null) cmp = -1;
+          else cmp = av - bv;
+          break;
+        }
       }
       return sortDir === 'desc' ? -cmp : cmp;
     });
-  }, [filtered, sortField, sortDir]);
+  }, [filtered, sortField, sortDir, bondYtmByAggKey]);
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortField(field); setSortDir('desc'); }
   };
 
-  const totalAum = activos.reduce((s, a) => s + a.total_usd, 0);
-  const allBrokers = [...new Set(activos.flatMap(a => a.brokers))].sort();
+  const totalAum = useMemo(() => filtered.reduce((s, a) => s + a.total_usd, 0), [filtered]);
+  const allBrokers = useMemo(
+    () => [...new Set(state.allPositions.map((p) => p.broker))].sort(),
+    [state.allPositions]
+  );
+  const advisorFilterOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const p of state.allPositions) {
+      const a = state.advisorsByCliente[p.cliente_id]?.trim();
+      if (a) names.add(a);
+    }
+    return [...names].sort();
+  }, [state.allPositions, state.advisorsByCliente]);
 
-  // Aggregates for summary cards
-  const byClase = activos.reduce<Record<string, number>>((acc, a) => {
-    acc[a.clase_activo] = (acc[a.clase_activo] ?? 0) + a.total_usd;
-    return acc;
-  }, {});
+  // Aggregates for summary cards (respeta filtros activos)
+  const byClase = useMemo(
+    () =>
+      filtered.reduce<Record<string, number>>((acc, a) => {
+        acc[a.clase_activo] = (acc[a.clase_activo] ?? 0) + a.total_usd;
+        return acc;
+      }, {}),
+    [filtered]
+  );
 
   if (!state.hasParsed) {
     return (
@@ -286,7 +423,7 @@ export default function ActivosPage() {
   return (
     <div className="page-shell">
       <div>
-        <h2 className="page-title">Activos ({activos.length} instrumentos)</h2>
+        <h2 className="page-title">Activos ({filtered.length} instrumentos)</h2>
         <p className="page-subtitle">Exposición agregada por instrumento cross-broker</p>
       </div>
 
@@ -324,9 +461,27 @@ export default function ActivosPage() {
           <option value="all">Todos los brokers</option>
           {allBrokers.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
-        {(filterClase !== 'all' || filterForma !== 'all' || filterBroker !== 'all' || search) && (
+        <select
+          value={filterAdvisor}
+          onChange={(e) => setFilterAdvisor(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="all">Todos los advisors</option>
+          {advisorFilterOptions.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+        {(filterClase !== 'all' || filterForma !== 'all' || filterBroker !== 'all' || filterAdvisor !== 'all' || search) && (
           <button
-            onClick={() => { setSearch(''); setFilterClase('all'); setFilterForma('all'); setFilterBroker('all'); }}
+            onClick={() => {
+              setSearch('');
+              setFilterClase('all');
+              setFilterForma('all');
+              setFilterBroker('all');
+              setFilterAdvisor('all');
+            }}
             className="text-sm text-primary hover:underline"
           >
             Limpiar filtros
@@ -384,6 +539,12 @@ export default function ActivosPage() {
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Descripción</th>
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Clase</th>
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Forma Legal</th>
+                  <th
+                    className="text-right p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground whitespace-nowrap"
+                    onClick={() => toggleSort('tir')}
+                  >
+                    TIR {sortField === 'tir' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+                  </th>
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Brokers</th>
                   <th className="text-center p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground" onClick={() => toggleSort('titulares')}>
                     Titulares {sortField === 'titulares' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
@@ -396,16 +557,18 @@ export default function ActivosPage() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.slice(0, 300).map(activo => {
-                  const isExpanded = expandedTicker === activo.ticker;
+                {sorted.slice(0, 300).map((activo) => {
+                  const isExpanded = expandedAggKey === activo.aggKey;
+                  const tirCell = formatTirCell(bondYtmByAggKey.get(activo.aggKey) ?? null);
                   return (
                     <ActivoRow
-                      key={activo.ticker}
+                      key={activo.aggKey}
                       activo={activo}
                       totalAum={totalAum}
                       isExpanded={isExpanded}
-                      onToggle={() => setExpandedTicker(isExpanded ? null : activo.ticker)}
+                      onToggle={() => setExpandedAggKey(isExpanded ? null : activo.aggKey)}
                       visibleCashBuckets={visibleCashBuckets}
+                      tirCell={tirCell}
                     />
                   );
                 })}
@@ -418,12 +581,13 @@ export default function ActivosPage() {
   );
 }
 
-function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets }: {
+function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets, tirCell }: {
   activo: ActivoSummary;
   totalAum: number;
   isExpanded: boolean;
   onToggle: () => void;
   visibleCashBuckets: { key: CashBucketKey; label: string }[];
+  tirCell: string;
 }) {
   const pct = totalAum > 0 ? (activo.total_usd / totalAum) * 100 : 0;
   const uniqueTitulares = new Set(activo.titulares.map(t => t.cliente_id)).size;
@@ -492,6 +656,7 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
         <td className="p-3 text-muted-foreground max-w-[250px] truncate" title={activo.descripcion}>{activo.descripcion}</td>
         <td className="p-3"><Badge variant="secondary" className="text-xs">{activo.clase_activo}</Badge></td>
         <td className="p-3 text-xs text-muted-foreground">{activo.forma_legal ?? '—'}</td>
+        <td className="p-3 text-right font-mono tabular-nums text-muted-foreground">{tirCell}</td>
         <td className="p-3">
           <div className="flex gap-1">{activo.brokers.map(b => <Badge key={b} variant="outline" className="text-xs">{b}</Badge>)}</div>
         </td>
@@ -502,7 +667,7 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets 
       </tr>
       {isExpanded && (
         <tr className="bg-muted/30">
-          <td colSpan={9} className="p-0">
+          <td colSpan={10} className="p-0">
             <div className="p-4">
               <p className="text-xs font-medium text-muted-foreground mb-2 uppercase">Tenedores de {activo.ticker}</p>
               <div className="max-h-[380px] overflow-auto rounded-md border border-border/50">

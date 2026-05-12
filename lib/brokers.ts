@@ -8,6 +8,7 @@ export interface BrokerMeta {
   code: BrokerCode;
   nombre: string;
   pais: 'AR' | 'US';
+  /** offshore = archivo en USD end-to-end (precio unitario y valuación); sin FX por fila. */
   tipo: 'local' | 'offshore';
   moneda_nativa: string; // ISO 4217
   /** Formato de fecha que usa el broker en sus reportes */

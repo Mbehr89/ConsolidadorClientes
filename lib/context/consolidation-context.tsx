@@ -40,6 +40,8 @@ export interface ConsolidationState {
   allPositions: Position[];
   /** Grupos económicos cargados del store (KV); se aplican a posiciones como `grupo_id`). */
   grupos: GruposStore;
+  /** Advisor por `cliente_id` (mapping cuenta→advisor + store persistido tras parse). */
+  advisorsByCliente: Record<string, string>;
   fxManual: number | null;
   /** FX ARS/USD sugerido automáticamente a partir de los archivos cargados. */
   fxSuggested: number | null;
@@ -67,6 +69,7 @@ const INITIAL_STATE: ConsolidationState = {
   files: [],
   allPositions: [],
   grupos: [],
+  advisorsByCliente: {},
   fxManual: null,
   fxSuggested: null,
   fechaIeb: null,
@@ -166,6 +169,29 @@ function buildCuentaFieldMap(
     }
     const raw = value[field];
     if (typeof raw === 'string' && raw.trim()) out[cuenta] = raw.trim();
+  }
+  return out;
+}
+
+/** Une advisors persistidos con mapping cuenta→advisor para todos los brokers. */
+function mergeAdvisorsForClientes(
+  positions: Position[],
+  mappingStore: MappingCuentasStore | null,
+  persisted: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = { ...persisted };
+  if (!mappingStore) return out;
+
+  const advisorByBroker: Record<BrokerCode, Record<string, string>> = {
+    GMA: buildCuentaFieldMap(mappingStore.GMA, 'advisor'),
+    MS: buildCuentaFieldMap(mappingStore.MS, 'advisor'),
+    NETX360: buildCuentaFieldMap(mappingStore.NETX360, 'advisor'),
+    IEB: buildCuentaFieldMap(mappingStore.IEB, 'advisor'),
+  };
+
+  for (const p of positions) {
+    const adv = advisorByBroker[p.broker]?.[p.cuenta];
+    if (adv?.trim()) out[p.cliente_id] = adv.trim();
   }
   return out;
 }
@@ -346,6 +372,8 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
       .flatMap((f) => f.result!.positions);
     const allPositions = applyGrupoIdsToPositions(raw, gruposStore);
 
+    const advisorsByCliente = mergeAdvisorsForClientes(allPositions, mappingStore, clienteAdvisorsStore);
+
     const ignored = loadIgnoredPairKeys();
     const aliasSuggestionsCount = detectAliasCandidates(
       allPositions,
@@ -358,6 +386,7 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
       files,
       allPositions,
       grupos: gruposStore,
+      advisorsByCliente,
       hasParsed: allPositions.length > 0,
       isProcessing: false,
       aliasSuggestionsCount,
@@ -388,29 +417,11 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      if (mappingStore) {
-        const advisorByCuentaGma = buildCuentaFieldMap(mappingStore.GMA, 'advisor');
-        const advisorByCuentaMs = buildCuentaFieldMap(mappingStore.MS, 'advisor');
-        const nextAdvisors = { ...clienteAdvisorsStore };
-
-        for (const p of allPositions) {
-          const byCuenta =
-            p.broker === 'GMA'
-              ? advisorByCuentaGma[p.cuenta]
-              : p.broker === 'MS'
-                ? advisorByCuentaMs[p.cuenta]
-                : undefined;
-          if (byCuenta && byCuenta.trim()) {
-            nextAdvisors[p.cliente_id] = byCuenta.trim();
-          }
-        }
-
-        await fetch('/api/config/cliente-advisors', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(nextAdvisors),
-        });
-      }
+      await fetch('/api/config/cliente-advisors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(advisorsByCliente),
+      });
     } catch {
       /* no bloquear parse si falla persistencia advisors */
     }

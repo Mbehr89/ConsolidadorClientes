@@ -7,7 +7,7 @@ import { useConsolidation } from '@/lib/context/consolidation-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { brokerColorClass, formatCompact, formatCurrency, formatPct } from '@/lib/utils';
-import { BROKERS } from '@/lib/brokers';
+import { BROKERS, isOffshore } from '@/lib/brokers';
 import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
@@ -936,6 +936,7 @@ function aggregate(positions: Position[], keyFn: (p: Position) => string): Recor
 }
 
 function formatArsPrice(p: Position): string {
+  if (isOffshore(p.broker)) return '—';
   if (p.moneda === 'ARS' && p.precio_mercado != null && Number.isFinite(p.precio_mercado)) {
     return `${p.precio_mercado.toLocaleString('es-AR', {
       minimumFractionDigits: 2,
@@ -968,6 +969,7 @@ function formatUsdPrice(p: Position): string {
 }
 
 function formatArsValuation(p: Position): string {
+  if (isOffshore(p.broker)) return '—';
   let arsValue: number | null = null;
   if (Number.isFinite(p.valor_mercado_local) && p.valor_mercado_local > 0 && p.moneda === 'ARS') {
     arsValue = p.valor_mercado_local;
