@@ -713,6 +713,9 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
                               </td>
                               <td className="p-1.5 text-muted-foreground">{t.broker}</td>
                               <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
+                              <td className="p-1.5 text-right font-mono tabular-nums">
+                                {t.cantidad.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                              </td>
                               <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
                             </tr>
                           ))}

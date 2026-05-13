@@ -96,7 +96,7 @@ export const PositionSchema = z.object({
   cantidad: z.number(),
   cantidad_disponible: z.number().nullable(),
   cantidad_no_disponible: z.number().nullable(),
-  /** En brokers offshore (MS, NETX360) es precio unitario en USD. */
+  /** Precio unitario del archivo: offshore en USD; local equity/ETF en ARS (CEDEAR en pesos); resto según moneda. */
   precio_mercado: z.number().nullable(),
   moneda: z.string().min(3).max(3), // ISO 4217
   moneda_subtipo: z.string().nullable(),

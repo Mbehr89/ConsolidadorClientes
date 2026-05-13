@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Landmark, Printer, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,10 +10,81 @@ import { issuerByTickerFromEvents, uniqueTickers } from '@/lib/bonds/parse-calen
 import { issuerLabel } from '@/lib/bonds/issuers';
 import { filterBondEventsByViewMode, tickersWithBothRegimes, type BondFlowViewMode } from '@/lib/bonds/flow-regime';
 import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
+import { formatCurrency } from '@/lib/utils';
 
 const PORTFOLIO_LS = 'consolidador-bond-portfolio-v1';
 
-type PortfolioLine = { ticker: string; weightPct: number };
+type PortfolioLine = {
+  ticker: string;
+  weightPct: number;
+  /** Precio sucio por 100 VN; vacío = usar el de «Parámetros de valuación». */
+  dirtyPricePer100: string;
+};
+
+type StoredPortfolio = {
+  lines: PortfolioLine[];
+  /** legacy */
+  totalUsd?: string;
+  totalCartera?: string;
+  monedaTotal?: 'USD' | 'ARS';
+  portfolioFx?: string;
+  preciosCarteraArs?: boolean;
+};
+
+function parseDirtyInput(raw: string, fallback: number): number {
+  const n = Number(raw.replace(',', '.').trim());
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function parseFxInput(raw: string): number | null {
+  const n = Number(raw.replace(',', '.').trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+type CarteraPersist = {
+  lines: PortfolioLine[];
+  totalCartera: string;
+  monedaTotal: 'USD' | 'ARS';
+  portfolioFx: string;
+  preciosCarteraArs: boolean;
+};
+
+function migratePortfolioFromStorage(raw: string | null): CarteraPersist {
+  const empty: CarteraPersist = {
+    lines: [],
+    totalCartera: '',
+    monedaTotal: 'USD',
+    portfolioFx: '',
+    preciosCarteraArs: false,
+  };
+  if (!raw) return empty;
+  try {
+    const j = JSON.parse(raw) as unknown;
+    const mapLine = (x: Record<string, unknown>): PortfolioLine => ({
+      ticker: String(x.ticker ?? ''),
+      weightPct: Number(x.weightPct) || 0,
+      dirtyPricePer100: typeof x.dirtyPricePer100 === 'string' ? x.dirtyPricePer100 : '',
+    });
+    if (Array.isArray(j)) {
+      return { ...empty, lines: j.map((x) => mapLine(x as Record<string, unknown>)) };
+    }
+    if (j && typeof j === 'object' && Array.isArray((j as StoredPortfolio).lines)) {
+      const o = j as StoredPortfolio;
+      const legacyUsd = typeof o.totalUsd === 'string' ? o.totalUsd : '';
+      const totalCartera = typeof o.totalCartera === 'string' ? o.totalCartera : legacyUsd;
+      return {
+        lines: o.lines.map((x) => mapLine(x as unknown as Record<string, unknown>)),
+        totalCartera,
+        monedaTotal: o.monedaTotal === 'ARS' ? 'ARS' : 'USD',
+        portfolioFx: typeof o.portfolioFx === 'string' ? o.portfolioFx : '',
+        preciosCarteraArs: o.preciosCarteraArs === true,
+      };
+    }
+  } catch {
+    /* noop */
+  }
+  return empty;
+}
 
 function fmtPct(x: number | null | undefined, digits = 2): string {
   if (x == null || !Number.isFinite(x)) return '—';
@@ -44,28 +115,106 @@ export default function BonosPage() {
   const [durMax, setDurMax] = useState('');
 
   const [portfolio, setPortfolio] = useState<PortfolioLine[]>([]);
+  const [totalCartera, setTotalCartera] = useState('');
+  const [monedaTotalCartera, setMonedaTotalCartera] = useState<'USD' | 'ARS'>('USD');
+  const [portfolioFxInput, setPortfolioFxInput] = useState('');
+  const [preciosCarteraArs, setPreciosCarteraArs] = useState(false);
   const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
 
+  const portfolioRef = useRef<PortfolioLine[]>([]);
+  const totalCarteraRef = useRef('');
+  const monedaTotalRef = useRef<'USD' | 'ARS'>('USD');
+  const portfolioFxRef = useRef('');
+  const preciosArsRef = useRef(false);
+
   useEffect(() => {
+    portfolioRef.current = portfolio;
+  }, [portfolio]);
+  useEffect(() => {
+    totalCarteraRef.current = totalCartera;
+  }, [totalCartera]);
+  useEffect(() => {
+    monedaTotalRef.current = monedaTotalCartera;
+  }, [monedaTotalCartera]);
+  useEffect(() => {
+    portfolioFxRef.current = portfolioFxInput;
+  }, [portfolioFxInput]);
+  useEffect(() => {
+    preciosArsRef.current = preciosCarteraArs;
+  }, [preciosCarteraArs]);
+
+  const flushPortfolioStorage = useCallback(() => {
     try {
-      const raw = localStorage.getItem(PORTFOLIO_LS);
-      if (raw) {
-        const parsed = JSON.parse(raw) as PortfolioLine[];
-        if (Array.isArray(parsed)) setPortfolio(parsed);
-      }
+      localStorage.setItem(
+        PORTFOLIO_LS,
+        JSON.stringify({
+          lines: portfolioRef.current,
+          totalCartera: totalCarteraRef.current,
+          monedaTotal: monedaTotalRef.current,
+          portfolioFx: portfolioFxRef.current,
+          preciosCarteraArs: preciosArsRef.current,
+        })
+      );
     } catch {
       /* noop */
     }
+  }, []);
+
+  useEffect(() => {
+    const m = migratePortfolioFromStorage(localStorage.getItem(PORTFOLIO_LS));
+    setPortfolio(m.lines);
+    setTotalCartera(m.totalCartera);
+    setMonedaTotalCartera(m.monedaTotal);
+    setPortfolioFxInput(m.portfolioFx);
+    setPreciosCarteraArs(m.preciosCarteraArs);
+    portfolioRef.current = m.lines;
+    totalCarteraRef.current = m.totalCartera;
+    monedaTotalRef.current = m.monedaTotal;
+    portfolioFxRef.current = m.portfolioFx;
+    preciosArsRef.current = m.preciosCarteraArs;
   }, []);
 
   const persistPortfolio = useCallback((next: PortfolioLine[]) => {
     setPortfolio(next);
-    try {
-      localStorage.setItem(PORTFOLIO_LS, JSON.stringify(next));
-    } catch {
-      /* noop */
-    }
-  }, []);
+    portfolioRef.current = next;
+    flushPortfolioStorage();
+  }, [flushPortfolioStorage]);
+
+  const setTotalCarteraPersist = useCallback(
+    (v: string) => {
+      setTotalCartera(v);
+      totalCarteraRef.current = v;
+      flushPortfolioStorage();
+    },
+    [flushPortfolioStorage]
+  );
+
+  const setMonedaTotalPersist = useCallback(
+    (m: 'USD' | 'ARS') => {
+      setMonedaTotalCartera(m);
+      monedaTotalRef.current = m;
+      flushPortfolioStorage();
+    },
+    [flushPortfolioStorage]
+  );
+
+  const setPortfolioFxPersist = useCallback(
+    (v: string) => {
+      setPortfolioFxInput(v);
+      portfolioFxRef.current = v;
+      flushPortfolioStorage();
+    },
+    [flushPortfolioStorage]
+  );
+
+  const setPreciosCarteraArsPersist = useCallback(
+    (on: boolean) => {
+      setPreciosCarteraArs(on);
+      preciosArsRef.current = on;
+      flushPortfolioStorage();
+    },
+    [flushPortfolioStorage]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +277,12 @@ export default function BonosPage() {
     return Number.isFinite(n) && n > 0 ? n : 1;
   }, [usdArsFx]);
 
+  /** TC para convertir montos/precios de la cartera (ARS por 1 USD). Vacío = mismo que valuación. */
+  const fxCartera = useMemo(() => {
+    const o = parseFxInput(portfolioFxInput);
+    return o ?? fx;
+  }, [portfolioFxInput, fx]);
+
   const rows = useMemo(() => {
     const out: Array<{
       ticker: string;
@@ -178,11 +333,6 @@ export default function BonosPage() {
     return filteredRows.find((r) => r.ticker === selectedTicker) ?? null;
   }, [filteredRows, selectedTicker]);
 
-  const metricsByTicker = useMemo(() => {
-    const m = new Map<string, (typeof rows)[0]['metrics']>();
-    for (const r of rows) m.set(r.ticker, r.metrics);
-    return m;
-  }, [rows]);
   const selectedInPortfolio = useMemo(
     () => (!!selectedTicker ? portfolio.some((p) => p.ticker === selectedTicker) : false),
     [portfolio, selectedTicker]
@@ -193,15 +343,44 @@ export default function BonosPage() {
     [portfolio]
   );
 
+  const portfolioLinesWithMetrics = useMemo(
+    () =>
+      portfolio.map((line) => {
+        const dirtyInput = parseDirtyInput(line.dirtyPricePer100, dirtyN);
+        const dirtyForLine = preciosCarteraArs ? dirtyInput / fxCartera : dirtyInput;
+        const met = computeBondYieldMetrics(eventsView, line.ticker, valuationAsDate, dirtyForLine, nominalN, fx);
+        return { line, dirtyForLine, met };
+      }),
+    [portfolio, eventsView, valuationAsDate, dirtyN, nominalN, fx, preciosCarteraArs, fxCartera]
+  );
+
+  const portfolioPositiveWeightSum = useMemo(
+    () => portfolio.reduce((s, l) => s + (l.weightPct > 0 ? l.weightPct : 0), 0),
+    [portfolio]
+  );
+
+  const totalCarteraNUsd = useMemo(() => {
+    const raw = Number(totalCartera.replace(',', '.').trim());
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    if (monedaTotalCartera === 'ARS') return raw / fxCartera;
+    return raw;
+  }, [totalCartera, monedaTotalCartera, fxCartera]);
+
+  /** Equivalente ARS del precio global (por 100), para placeholder en modo precios ARS. */
+  const dirtyGlobalArsHint = useMemo(() => {
+    if (!preciosCarteraArs || !(dirtyN > 0) || !(fxCartera > 0)) return '';
+    const v = dirtyN * fxCartera;
+    return Number.isFinite(v) ? String(Math.round(v * 100) / 100) : '';
+  }, [preciosCarteraArs, dirtyN, fxCartera]);
+
   const portfolioAgg = useMemo(() => {
-    const lines = portfolio.filter((l) => l.weightPct > 0);
-    const sumW = lines.reduce((s, l) => s + l.weightPct, 0);
+    const lines = portfolioLinesWithMetrics.filter(({ line }) => line.weightPct > 0);
+    const sumW = lines.reduce((s, { line: l }) => s + l.weightPct, 0);
     if (sumW <= 0) return null;
     let wMod = 0;
     let wYtm = 0;
-    for (const l of lines) {
-      const w = l.weightPct / sumW;
-      const met = metricsByTicker.get(l.ticker);
+    for (const { line, met } of lines) {
+      const w = line.weightPct / sumW;
       if (!met?.modifiedDuration || met.ytmAnnualEffective == null) continue;
       wMod += w * met.modifiedDuration;
       wYtm += w * met.ytmAnnualEffective;
@@ -211,11 +390,11 @@ export default function BonosPage() {
       ytm: wYtm,
       weightsNormalized: true,
     };
-  }, [portfolio, metricsByTicker]);
+  }, [portfolioLinesWithMetrics]);
 
   const addToPortfolio = (ticker: string) => {
     if (portfolio.some((p) => p.ticker === ticker)) return;
-    const next = [...portfolio, { ticker, weightPct: 0 }];
+    const next = [...portfolio, { ticker, weightPct: 0, dirtyPricePer100: dirtyPrice }];
     persistPortfolio(next);
   };
 
@@ -225,6 +404,10 @@ export default function BonosPage() {
 
   const updateWeight = (ticker: string, pct: number) => {
     persistPortfolio(portfolio.map((p) => (p.ticker === ticker ? { ...p, weightPct: pct } : p)));
+  };
+
+  const updateLineDirtyPrice = (ticker: string, value: string) => {
+    persistPortfolio(portfolio.map((p) => (p.ticker === ticker ? { ...p, dirtyPricePer100: value } : p)));
   };
 
   return (
@@ -455,11 +638,67 @@ export default function BonosPage() {
         <CardHeader>
           <CardTitle className="text-base">Cartera modelo</CardTitle>
           <CardDescription>
-            Asigná pesos (%) que sumen 100. La duration y TIR de cartera son aproximación ponderada por las métricas
-            de la tabla (mismo precio y fecha para todos).
+            Cada bono puede tener su propio precio sucio (por 100 VN). Podés cargar el monto total de la cartera y los
+            precios de cartera en pesos usando el tipo de cambio de la cartera (ARS por USD); si el TC queda vacío, se
+            usa el mismo que en «USD/ARS» de valuación. Las TIR se siguen resolviendo en USD por debajo.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {portfolio.length > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div>
+                <label className="text-label mb-1 block">TC cartera (ARS por 1 USD)</label>
+                <input
+                  value={portfolioFxInput}
+                  onChange={(e) => setPortfolioFxPersist(e.target.value)}
+                  className="h-9 w-full max-w-[11rem] rounded-md border bg-background px-3 text-sm font-mono"
+                  inputMode="decimal"
+                  placeholder={usdArsFx}
+                  autoComplete="off"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">Vacío = mismo valor que «USD/ARS» arriba ({fx}).</p>
+              </div>
+              <div>
+                <label className="text-label mb-1 block">Moneda del monto total</label>
+                <select
+                  value={monedaTotalCartera}
+                  onChange={(e) => setMonedaTotalPersist(e.target.value as 'USD' | 'ARS')}
+                  className="h-9 w-full max-w-[11rem] rounded-md border bg-background px-2 text-sm"
+                >
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2 xl:col-span-2">
+                <label className="text-label mb-1 block">
+                  Monto total cartera ({monedaTotalCartera})
+                </label>
+                <input
+                  value={totalCartera}
+                  onChange={(e) => setTotalCarteraPersist(e.target.value)}
+                  className="h-9 w-full max-w-xs rounded-md border bg-background px-3 text-sm font-mono"
+                  inputMode="decimal"
+                  placeholder={monedaTotalCartera === 'ARS' ? 'ej. 500000000' : 'ej. 500000'}
+                  autoComplete="off"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Solo líneas con peso &gt; 0. Si el total está en ARS, se divide por el TC cartera ({fxCartera}) para
+                  repartir en proporción al valor en USD de cada bono.
+                </p>
+              </div>
+              <div className="sm:col-span-2 xl:col-span-4 flex flex-wrap items-center gap-2">
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={preciosCarteraArs}
+                    onChange={(e) => setPreciosCarteraArsPersist(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  <span>Precios Px/100 de la cartera en pesos (se convierten a USD con el TC cartera)</span>
+                </label>
+              </div>
+            </div>
+          )}
           {portfolio.length > 0 && (
             <p className="text-sm text-muted-foreground">
               Suma de pesos:{' '}
@@ -471,11 +710,19 @@ export default function BonosPage() {
           )}
           {portfolio.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              Agregá bonos desde la calculadora. Los pesos se guardan en este navegador.
+              Agregá bonos desde la calculadora. Pesos, precios, TC y monto total se guardan en este navegador.
             </p>
           )}
-          {portfolio.map((line) => {
-            const met = metricsByTicker.get(line.ticker);
+          {portfolioLinesWithMetrics.map(({ line, dirtyForLine, met }) => {
+            const allocUsd =
+              totalCarteraNUsd != null &&
+              portfolioPositiveWeightSum > 0 &&
+              line.weightPct > 0
+                ? totalCarteraNUsd * (line.weightPct / portfolioPositiveWeightSum)
+                : null;
+            const allocArs = allocUsd != null && fxCartera > 0 ? allocUsd * fxCartera : null;
+            const impliedNominal =
+              allocUsd != null && allocUsd > 0 && dirtyForLine > 0 ? (allocUsd * 100) / dirtyForLine : null;
             return (
               <div
                 key={line.ticker}
@@ -497,7 +744,47 @@ export default function BonosPage() {
                     className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                   />
                 </div>
-                <div className="text-sm text-muted-foreground">
+                <div className="w-28">
+                  <label
+                    className="text-label mb-1 block"
+                    title={
+                      preciosCarteraArs
+                        ? 'Precio sucio por 100 VN en ARS (se divide por TC cartera para el cálculo).'
+                        : 'Precio sucio por 100 VN en USD. Vacío = precio global.'
+                    }
+                  >
+                    Px /100{preciosCarteraArs ? ' ARS' : ' USD'}
+                  </label>
+                  <input
+                    value={line.dirtyPricePer100}
+                    onChange={(e) => updateLineDirtyPrice(line.ticker, e.target.value)}
+                    placeholder={preciosCarteraArs ? dirtyGlobalArsHint || undefined : dirtyPrice}
+                    className="h-9 w-full rounded-md border bg-background px-2 text-sm font-mono"
+                    inputMode="decimal"
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="min-w-[112px] text-right">
+                  <p className="text-label mb-1 text-left sm:text-right">Asignación USD</p>
+                  <p className="font-mono text-sm font-medium">
+                    {allocUsd != null ? formatCurrency(allocUsd) : '—'}
+                  </p>
+                </div>
+                <div className="min-w-[120px] text-right">
+                  <p className="text-label mb-1 text-left sm:text-right">Asignación ARS</p>
+                  <p className="font-mono text-sm font-medium">
+                    {allocArs != null ? formatCurrency(allocArs, 'ARS') : '—'}
+                  </p>
+                </div>
+                <div className="min-w-[96px] text-right" title="Unidades de nominal si el precio es USD por cada 100 VN.">
+                  <p className="text-label mb-1 text-left sm:text-right">VN impl.</p>
+                  <p className="font-mono text-sm">
+                    {impliedNominal != null && Number.isFinite(impliedNominal)
+                      ? impliedNominal.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                      : '—'}
+                  </p>
+                </div>
+                <div className="min-w-0 flex-1 basis-full sm:basis-0 text-sm text-muted-foreground">
                   TEA {fmtPct(met?.ytmAnnualEffective)} · TNA{' '}
                   {met?.ytmAnnualEffective != null ? `${teaToTnaMonthly(met.ytmAnnualEffective).toFixed(2)}%` : '—'} ·
                   Macaulay {fmtNum(met?.macaulayYears)} años · Dur. mod. {fmtNum(met?.modifiedDuration)} años · Convexidad{' '}

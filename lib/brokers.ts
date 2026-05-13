@@ -2,13 +2,16 @@
  * Broker metadata — info estática para clasificación fiscal y análisis.
  * Ampliar cuando se sume IBKR o un 5to broker.
  */
-import type { BrokerCode } from './schema';
+import type { BrokerCode, ClaseActivo } from './schema';
 
 export interface BrokerMeta {
   code: BrokerCode;
   nombre: string;
   pais: 'AR' | 'US';
-  /** offshore = archivo en USD end-to-end (precio unitario y valuación); sin FX por fila. */
+  /**
+   * local = renta variable (acciones, ETF) cotiza en pesos en el archivo; bonos/fondos según emisión.
+   * offshore = archivo en USD end-to-end (precio unitario y valuación); sin FX por fila.
+   */
   tipo: 'local' | 'offshore';
   moneda_nativa: string; // ISO 4217
   /** Formato de fecha que usa el broker en sus reportes */
@@ -67,6 +70,26 @@ export const BROKERS: Record<BrokerCode, BrokerMeta> = {
  */
 export function isOffshore(broker: BrokerCode): boolean {
   return BROKERS[broker].tipo === 'offshore';
+}
+
+/**
+ * Moneda del precio unitario tal como viene en el extracto del broker.
+ * Locales: equity y ETF en ARS aunque `moneda` del instrumento sea USD (CEDEAR/ADR en pesos).
+ * Offshore: siempre USD.
+ */
+export function statementUnitPriceCurrency(
+  broker: BrokerCode,
+  claseActivo: ClaseActivo,
+  monedaPosition: string
+): 'ARS' | 'USD' {
+  if (BROKERS[broker].tipo === 'offshore') return 'USD';
+  if (BROKERS[broker].tipo === 'local' && (claseActivo === 'equity' || claseActivo === 'etf')) return 'ARS';
+  return monedaPosition === 'USD' ? 'USD' : 'ARS';
+}
+
+/** Custodio local y clase equity/ETF → el precio del archivo está en pesos. */
+export function isLocalEquityOrEtfQuotedInPesos(broker: BrokerCode, claseActivo: ClaseActivo): boolean {
+  return BROKERS[broker].tipo === 'local' && (claseActivo === 'equity' || claseActivo === 'etf');
 }
 
 /**

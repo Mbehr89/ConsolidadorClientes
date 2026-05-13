@@ -171,12 +171,15 @@ function groupQtyAndPrices(positions: Position[], key: string): { qty: number; u
     qty += p.cantidad;
     const v = p.valor_mercado_usd ?? 0;
     usd += v;
-    if (p.precio_mercado != null && p.precio_mercado > 0 && v > 0) {
-      pxNum += p.precio_mercado * v;
-      pxDen += v;
+    const q = p.cantidad;
+    const unitUsd =
+      Number.isFinite(q) && Math.abs(q) > 1e-12 && Number.isFinite(v) && v !== 0 ? v / q : null;
+    if (unitUsd != null && Number.isFinite(unitUsd) && unitUsd > 0) {
+      pxNum += unitUsd * Math.abs(q);
+      pxDen += Math.abs(q);
     }
   }
-  const avgPriceUsd = pxDen > 0 ? pxNum / pxDen : Math.abs(qty) > 1e-9 ? usd / Math.abs(qty) : null;
+  const avgPriceUsd = pxDen > 0 ? pxNum / pxDen : Math.abs(qty) > 1e-9 ? usd / qty : null;
   return { qty, usd, avgPriceUsd };
 }
 

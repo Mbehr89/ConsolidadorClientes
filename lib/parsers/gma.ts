@@ -341,10 +341,15 @@ function parseDataRow(
   } else {
     // Instrument blocks
     moneda = monedaEmision;
-    if (cotizLocal > 1 && cotizEmisionAdj !== cotizLocalAdj) {
-      // Broker provided FX: cotizLocal (I) is ARS price, cotizEmision (F) is price in emission currency (USD).
-      // Both were normalized by VN scale inferred from I vs L.
-      valorMercadoUsd = valuacionEmision; // Already in emisor currency (USD for bonds/ONs)
+    // Solo emisión en USD (bonos, ON, etc.): F/L distintas implican valuación emisión ya en USD.
+    // Nunca usar valuacionEmision como USD para acciones/CEDEARs en ARS: ahí col 6 sigue siendo pesos
+    // y una pequeña diferencia I vs F (escala VN) disparaba esta rama por error.
+    if (
+      monedaEmision === 'USD' &&
+      cotizLocal > 1 &&
+      cotizEmisionAdj !== cotizLocalAdj
+    ) {
+      valorMercadoUsd = valuacionEmision;
       fxSource = 'broker';
     } else if (cotizEmisionAdj === cotizLocalAdj) {
       // ARS instrument (acciones, CEDEARs) — cotiz is ARS price

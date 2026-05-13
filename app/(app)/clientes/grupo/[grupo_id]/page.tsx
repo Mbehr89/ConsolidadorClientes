@@ -23,6 +23,7 @@ import { ExportExcelButton } from '@/components/export-excel-button';
 import { ExportPortfolioJsonButton } from '@/components/export-portfolio-json-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/flow-report';
+import { formatArsPrice, formatUsdPrice } from '@/lib/format-position-price';
 
 export default function GrupoDetailPage() {
   const params = useParams();
@@ -933,39 +934,6 @@ function aggregate(positions: Position[], keyFn: (p: Position) => string): Recor
     acc[key] = (acc[key] ?? 0) + (p.valor_mercado_usd ?? 0);
     return acc;
   }, {});
-}
-
-function formatArsPrice(p: Position): string {
-  if (isOffshore(p.broker)) return '—';
-  if (p.moneda === 'ARS' && p.precio_mercado != null && Number.isFinite(p.precio_mercado)) {
-    return `${p.precio_mercado.toLocaleString('es-AR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 6,
-    })} ARS`;
-  }
-  if (!Number.isFinite(p.cantidad) || p.cantidad === 0 || !Number.isFinite(p.valor_mercado_local)) return '—';
-  const arsPrice = p.valor_mercado_local / p.cantidad;
-  if (!Number.isFinite(arsPrice)) return '—';
-  return `${arsPrice.toLocaleString('es-AR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  })} ARS`;
-}
-
-function formatUsdPrice(p: Position): string {
-  if (p.moneda === 'USD' && p.precio_mercado != null && Number.isFinite(p.precio_mercado)) {
-    return `${p.precio_mercado.toLocaleString('es-AR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 6,
-    })} USD`;
-  }
-  if (!Number.isFinite(p.cantidad) || p.cantidad === 0 || p.valor_mercado_usd == null) return '—';
-  const usdPrice = p.valor_mercado_usd / p.cantidad;
-  if (!Number.isFinite(usdPrice)) return '—';
-  return `${usdPrice.toLocaleString('es-AR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  })} USD`;
 }
 
 function formatArsValuation(p: Position): string {
