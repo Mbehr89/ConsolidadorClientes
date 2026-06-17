@@ -1,4 +1,5 @@
 import { ClaseActivoSchema, WARNING_CODES, type Position } from '@/lib/schema';
+import { isMoneyMarketSubtipo } from '@/lib/cash-buckets';
 import type { TickerMeta } from './types';
 
 /**
@@ -33,14 +34,20 @@ export function applyConfirmedGlossaryToPosition(pos: Position, meta: TickerMeta
     return pos;
   }
   const parsed = ClaseActivoSchema.safeParse(meta.clase);
-  let next: Position = { ...pos, warnings: stripTickerNoConfirmado(pos.warnings) };
-  if (parsed.success) {
-    next = { ...next, clase_activo: parsed.data };
-  } else if (meta.es_etf) {
-    next = { ...next, clase_activo: 'etf' };
+  let clase = pos.clase_activo;
+  if (parsed.success) clase = parsed.data;
+  else if (meta.es_etf) clase = 'etf';
+  if (meta.moneda_subtipo && isMoneyMarketSubtipo(meta.moneda_subtipo)) {
+    clase = 'cash';
   }
+  let next: Position = { ...pos, warnings: stripTickerNoConfirmado(pos.warnings), clase_activo: clase };
   if (meta.pais != null && meta.pais.length === 2) {
     next = { ...next, pais_emisor: meta.pais };
+  }
+  if (meta.moneda_subtipo) {
+    next = { ...next, moneda_subtipo: meta.moneda_subtipo };
+    if (meta.moneda_subtipo === 'money_market_ars') next = { ...next, moneda: 'ARS' };
+    if (meta.moneda_subtipo === 'money_market_usd') next = { ...next, moneda: 'USD' };
   }
   return next;
 }

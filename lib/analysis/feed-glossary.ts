@@ -1,5 +1,6 @@
 import type { Position } from '@/lib/schema';
 import type { TickersMetadataStore, TickersPendientesStore, TickerPendiente } from '@/lib/config-store/types';
+import { inferMoneyMarketSubtipo } from '@/lib/cash-buckets';
 
 /**
  * Alimenta el glosario de tickers pendientes a partir de posiciones parseadas.
@@ -29,6 +30,10 @@ export function feedGlossary(
     // Si existe pero NO está confirmado, debe aparecer en pendientes para revisión.
     if (meta?.confirmado) continue;
 
+    const mmSub = inferMoneyMarketSubtipo(p);
+    const claseSugerida = mmSub ? 'cash' : p.clase_activo;
+    const monedaSubtipoSugerido = mmSub ?? p.moneda_subtipo ?? null;
+
     const existing = out[key];
     if (existing) {
       const brokers = existing.brokers_detectados.includes(p.broker)
@@ -45,6 +50,8 @@ export function feedGlossary(
         ocurrencias: existing.ocurrencias + 1,
         brokers_detectados: brokers,
         descripcion_muestra: mergedDesc,
+        clase_sugerida: existing.clase_sugerida === 'cash' ? existing.clase_sugerida : claseSugerida,
+        moneda_subtipo_sugerido: existing.moneda_subtipo_sugerido ?? monedaSubtipoSugerido,
       };
       out[key] = next;
     } else {
@@ -52,8 +59,9 @@ export function feedGlossary(
         ticker: key,
         descripcion_muestra: p.descripcion.slice(0, 500),
         brokers_detectados: [p.broker],
-        clase_sugerida: p.clase_activo,
+        clase_sugerida: claseSugerida,
         pais_sugerido: p.pais_emisor ?? null,
+        moneda_subtipo_sugerido: monedaSubtipoSugerido,
         primera_aparicion: new Date().toISOString(),
         ocurrencias: 1,
         estado: 'pendiente',

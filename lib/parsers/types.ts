@@ -45,6 +45,7 @@ export interface TickerMeta {
   es_etf: boolean;
   nombre: string;
   confirmado: boolean;
+  moneda_subtipo?: string | null;
 }
 
 /**

@@ -12,6 +12,7 @@ import type {
   TickersPendientesStore,
 } from '@/lib/config-store/types';
 import { AdminOnly } from '@/components/admin-only';
+import { GLOSSARY_CASH_SEGMENT_OPTIONS } from '@/lib/cash-buckets';
 
 const CLASE_LIST: ClaseActivo[] = [
   'equity',
@@ -29,24 +30,31 @@ const BROKERS: BrokerCode[] = ['MS', 'NETX360', 'GMA', 'IEB'];
 
 function buildConfirmedMeta(
   pend: TickerPendiente,
-  opts: { clase: string; pais: string; esEtf: boolean }
+  opts: { clase: string; pais: string; esEtf: boolean; monedaSubtipo: string }
 ): TickerMeta {
   const pais =
     opts.pais.trim().length === 2 ? opts.pais.trim().toUpperCase() : null;
+  const segment = opts.monedaSubtipo.trim();
+  const moneda_subtipo = segment.length > 0 ? segment : null;
+  const clase =
+    moneda_subtipo && (moneda_subtipo.startsWith('money_market') || moneda_subtipo === 'ars' || moneda_subtipo === 'mep')
+      ? 'cash'
+      : opts.clase;
   return {
     pais,
-    clase: opts.clase,
+    clase,
     es_etf: opts.esEtf,
     nombre: pend.descripcion_muestra.slice(0, 200) || pend.ticker,
     confirmado: true,
     fuente: 'admin',
     confirmado_por: 'admin',
     fecha: new Date().toISOString(),
+    moneda_subtipo,
   };
 }
 
-type RowEdit = { clase: string; pais: string; esEtf: boolean };
-type ConfirmedRowEdit = { nombre: string; clase: string; pais: string; esEtf: boolean };
+type RowEdit = { clase: string; pais: string; esEtf: boolean; monedaSubtipo: string };
+type ConfirmedRowEdit = { nombre: string; clase: string; pais: string; esEtf: boolean; monedaSubtipo: string };
 
 function toConfirmedEdit(m: TickerMeta): ConfirmedRowEdit {
   return {
@@ -54,6 +62,7 @@ function toConfirmedEdit(m: TickerMeta): ConfirmedRowEdit {
     clase: m.clase,
     pais: m.pais ?? '',
     esEtf: m.es_etf,
+    monedaSubtipo: m.moneda_subtipo ?? '',
   };
 }
 
@@ -65,10 +74,11 @@ export default function GlosarioPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterBroker, setFilterBroker] = useState<BrokerCode | 'all'>('all');
-  const [filterEstado, setFilterEstado] = useState<'all' | 'pendiente' | 'en_revision'>('all');
+  const [confirmedOpen, setConfirmedOpen] = useState(true);
   const [edits, setEdits] = useState<Record<string, RowEdit>>({});
   const [confirmedEdits, setConfirmedEdits] = useState<Record<string, ConfirmedRowEdit>>({});
-  const [confirmedOpen, setConfirmedOpen] = useState(true);
+  const [filterEstado, setFilterEstado] = useState<'all' | 'pendiente' | 'en_revision'>('all');
+  const [filterSegment, setFilterSegment] = useState<string>('all');
 
   const load = useCallback(async () => {
     setError(null);
@@ -89,6 +99,7 @@ export default function GlosarioPage() {
           clase: p.clase_sugerida,
           pais: p.pais_sugerido ?? '',
           esEtf: p.clase_sugerida === 'etf',
+          monedaSubtipo: p.moneda_subtipo_sugerido ?? '',
         };
       }
       setEdits(nextEdits);
@@ -145,8 +156,15 @@ export default function GlosarioPage() {
     if (filterEstado !== 'all') {
       list = list.filter((p) => p.estado === filterEstado);
     }
+    if (filterSegment !== 'all') {
+      list = list.filter((p) => {
+        const seg = edits[p.ticker]?.monedaSubtipo ?? p.moneda_subtipo_sugerido ?? '';
+        if (filterSegment === 'mm') return seg.startsWith('money_market');
+        return seg === filterSegment;
+      });
+    }
     return list.sort((a, b) => b.ocurrencias - a.ocurrencias);
-  }, [pendienteList, search, filterBroker, filterEstado]);
+  }, [pendienteList, search, filterBroker, filterEstado, filterSegment, edits]);
 
   const confirmOne = useCallback(
     async (ticker: string) => {
@@ -156,11 +174,17 @@ export default function GlosarioPage() {
         clase: pend.clase_sugerida,
         pais: pend.pais_sugerido ?? '',
         esEtf: pend.clase_sugerida === 'etf',
+        monedaSubtipo: pend.moneda_subtipo_sugerido ?? '',
       };
       setSaving(true);
       setError(null);
       try {
-        const built = buildConfirmedMeta(pend, { clase: e.clase, pais: e.pais, esEtf: e.esEtf });
+        const built = buildConfirmedMeta(pend, {
+          clase: e.clase,
+          pais: e.pais,
+          esEtf: e.esEtf,
+          monedaSubtipo: e.monedaSubtipo,
+        });
         const meta = { ...metadata, [ticker]: built };
         const rest = { ...pendientes };
         delete rest[ticker];
@@ -208,12 +232,20 @@ export default function GlosarioPage() {
       setError(null);
       try {
         const pais = e.pais.trim().length === 2 ? e.pais.trim().toUpperCase() : null;
+        const segment = e.monedaSubtipo.trim();
+        const moneda_subtipo = segment.length > 0 ? segment : null;
+        const clase =
+          moneda_subtipo &&
+          (moneda_subtipo.startsWith('money_market') || moneda_subtipo === 'ars' || moneda_subtipo === 'mep')
+            ? 'cash'
+            : e.clase;
         const nextMeta: TickerMeta = {
           ...m,
           nombre: e.nombre.trim().slice(0, 200) || ticker,
-          clase: e.clase,
+          clase,
           pais,
           es_etf: e.esEtf,
+          moneda_subtipo,
           confirmado: true,
           fuente: 'admin',
           confirmado_por: 'admin',
@@ -243,6 +275,7 @@ export default function GlosarioPage() {
           clase: p.clase_sugerida,
           pais: p.pais_sugerido ?? '',
           esEtf: p.clase_sugerida === 'etf',
+          monedaSubtipo: p.moneda_subtipo_sugerido ?? '',
         });
         delete pend[p.ticker];
       }
@@ -281,7 +314,7 @@ export default function GlosarioPage() {
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Glosario de tickers</h2>
         <p className="text-muted-foreground mt-1">
-          Tickers sin metadata confirmada pasan a pendientes tras cada parseo. Confirmá para usar en futuros archivos.
+          Tickers sin metadata confirmada pasan a pendientes tras cada parseo. Confirmá clase y segmento (MM ARS / MM USD) para fondos de liquidez mal clasificados.
         </p>
       </div>
 
@@ -336,6 +369,19 @@ export default function GlosarioPage() {
               <option value="pendiente">Pendiente</option>
               <option value="en_revision">En revisión</option>
             </select>
+            <select
+              value={filterSegment}
+              onChange={(e) => setFilterSegment(e.target.value)}
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="all">Todos los segmentos</option>
+              <option value="mm">Money market (ARS o USD)</option>
+              {GLOSSARY_CASH_SEGMENT_OPTIONS.filter((o) => o.value).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="overflow-auto max-h-[480px] border rounded-md">
@@ -346,6 +392,7 @@ export default function GlosarioPage() {
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Descripción</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Brokers</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Clase</th>
+                  <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Segmento</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase w-20">País</th>
                   <th className="text-center p-2 text-xs font-medium text-muted-foreground uppercase">ETF</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">N</th>
@@ -356,13 +403,13 @@ export default function GlosarioPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="p-6 text-muted-foreground">
+                    <td colSpan={10} className="p-6 text-muted-foreground">
                       Cargando…
                     </td>
                   </tr>
                 ) : filteredPendientes.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-6 text-muted-foreground text-center">
+                    <td colSpan={10} className="p-6 text-muted-foreground text-center">
                       No hay coincidencias.
                     </td>
                   </tr>
@@ -372,6 +419,7 @@ export default function GlosarioPage() {
                       clase: p.clase_sugerida,
                       pais: p.pais_sugerido ?? '',
                       esEtf: p.clase_sugerida === 'etf',
+                      monedaSubtipo: p.moneda_subtipo_sugerido ?? '',
                     };
                     return (
                       <tr key={p.ticker} className="border-b border-border/40">
@@ -406,6 +454,34 @@ export default function GlosarioPage() {
                             {CLASE_LIST.map((c) => (
                               <option key={c} value={c}>
                                 {c}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-2 align-middle">
+                          <select
+                            className="h-8 w-full min-w-[108px] rounded-md border bg-background px-1 text-xs"
+                            value={e.monedaSubtipo}
+                            onChange={(ev) => {
+                              const monedaSubtipo = ev.target.value;
+                              setEdits((prev) => ({
+                                ...prev,
+                                [p.ticker]: {
+                                  ...e,
+                                  monedaSubtipo,
+                                  clase:
+                                    monedaSubtipo.startsWith('money_market') ||
+                                    monedaSubtipo === 'ars' ||
+                                    monedaSubtipo === 'mep'
+                                      ? 'cash'
+                                      : e.clase,
+                                },
+                              }));
+                            }}
+                          >
+                            {GLOSSARY_CASH_SEGMENT_OPTIONS.map((o) => (
+                              <option key={o.value || 'none'} value={o.value}>
+                                {o.label}
                               </option>
                             ))}
                           </select>
@@ -480,6 +556,7 @@ export default function GlosarioPage() {
                     <th className="text-left p-2 font-medium">Ticker</th>
                     <th className="text-left p-2 font-medium min-w-[180px]">Nombre</th>
                     <th className="text-left p-2 font-medium">Clase</th>
+                    <th className="text-left p-2 font-medium min-w-[108px]">Segmento</th>
                     <th className="text-left p-2 font-medium w-20">País</th>
                     <th className="text-center p-2 font-medium">ETF</th>
                     <th className="text-left p-2 font-medium">Fuente</th>
@@ -522,6 +599,34 @@ export default function GlosarioPage() {
                             {CLASE_LIST.map((c) => (
                               <option key={c} value={c}>
                                 {c}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-2 align-middle">
+                          <select
+                            className="h-8 w-full min-w-[108px] rounded-md border bg-background px-1 text-xs"
+                            value={e.monedaSubtipo}
+                            onChange={(ev) => {
+                              const monedaSubtipo = ev.target.value;
+                              setConfirmedEdits((prev) => ({
+                                ...prev,
+                                [t]: {
+                                  ...e,
+                                  monedaSubtipo,
+                                  clase:
+                                    monedaSubtipo.startsWith('money_market') ||
+                                    monedaSubtipo === 'ars' ||
+                                    monedaSubtipo === 'mep'
+                                      ? 'cash'
+                                      : e.clase,
+                                },
+                              }));
+                            }}
+                          >
+                            {GLOSSARY_CASH_SEGMENT_OPTIONS.map((o) => (
+                              <option key={o.value || 'none'} value={o.value}>
+                                {o.label}
                               </option>
                             ))}
                           </select>

@@ -12,39 +12,12 @@ import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
 import { filterBondEventsByViewMode } from '@/lib/bonds/flow-regime';
 import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
 import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
-
-type CashBucketKey =
-  | 'ars'
-  | 'cable'
-  | 'especie_7000'
-  | 'especie_10000'
-  | 'mep'
-  | 'money_market_ars'
-  | 'money_market_usd'
-  | 'eur';
-
-/** Buckets fijos para columnas de CASH (orden de visualización). */
-const CASH_BUCKET_DEFS: { key: CashBucketKey; label: string }[] = [
-  { key: 'ars', label: 'ARS' },
-  { key: 'cable', label: 'Cable' },
-  { key: 'especie_7000', label: 'Especie 7000' },
-  { key: 'especie_10000', label: 'Especie 10000' },
-  { key: 'mep', label: 'USD MEP' },
-  { key: 'money_market_ars', label: 'MM ARS' },
-  { key: 'money_market_usd', label: 'MM USD' },
-  { key: 'eur', label: 'EUR' },
-];
-
-const IEB_CASH_TICKER_BUCKET_MAP: Record<string, CashBucketKey> = {
-  PESOS: 'ars',
-  USD: 'mep',
-  'DOLAR EXT': 'cable',
-  DOLARUSA: 'especie_7000',
-  'MM PESOS': 'money_market_ars',
-  'MM DOLARES': 'money_market_usd',
-  'MM DOLAR': 'money_market_usd',
-  'MM USD': 'money_market_usd',
-};
+import {
+  CASH_BUCKET_DEFS,
+  getCashBucketKey,
+  isCashBucketPosition,
+  type CashBucketKey,
+} from '@/lib/cash-buckets';
 
 interface ActivoSummary {
   /** Clave de agregación (coincide con la del consolidado por posición). */
@@ -109,77 +82,13 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
       valor_local: p.valor_mercado_local,
       moneda: p.moneda,
       moneda_subtipo: p.moneda_subtipo,
-      cash_bucket: p.clase_activo === 'cash' ? getCashBucketKey(p) : null,
+      cash_bucket: isCashBucketPosition(p) ? getCashBucketKey(p) : null,
     });
 
     if (!activo.brokers.includes(p.broker)) activo.brokers.push(p.broker);
   }
 
   return Array.from(map.values());
-}
-
-/**
- * Clasifica cash en un bucket estable.
- *
- * Importante: en GMA el efectivo en USD (MEP/Cable/7000/10000) suele venir con
- * `moneda: 'ARS'` porque la valuación está en pesos; por eso **primero** miramos
- * `moneda_subtipo` y la descripción, y recién al final tratamos ARS “puro”.
- */
-function getCashBucketKey(p: Position): CashBucketKey {
-  const sub = (p.moneda_subtipo ?? '').trim().toLowerCase();
-  const desc = (p.descripcion ?? '').toLowerCase();
-  const tickerNorm = normalizeCashToken(p.ticker ?? '');
-  const descNorm = normalizeCashToken(p.descripcion ?? '');
-
-  // IEB: prioriza siempre columna F (Ticker) para cash.
-  if (p.broker === 'IEB') {
-    const fromTicker = IEB_CASH_TICKER_BUCKET_MAP[tickerNorm];
-    if (fromTicker) return fromTicker;
-    const fromDesc = (tickerNorm === '' || tickerNorm === '-') ? IEB_CASH_TICKER_BUCKET_MAP[descNorm] : undefined;
-    if (fromDesc) return fromDesc;
-  }
-
-  if (sub === 'ars') return 'ars';
-  if (sub === 'usd') return 'mep';
-  if (sub === '7000') return 'especie_7000';
-  if (sub === '10000') return 'especie_10000';
-  if (sub === 'cable') return 'cable';
-  if (sub === 'mep') return 'mep';
-  if (sub === 'money_market_ars' || sub === 'money market ars') return 'money_market_ars';
-  if (sub === 'money_market_usd' || sub === 'money market usd') return 'money_market_usd';
-  if (sub === 'money_market' || sub === 'money market') return p.moneda === 'ARS' ? 'money_market_ars' : 'money_market_usd';
-  if (sub === 'usd_cash' || sub === 'usd cash') return 'mep';
-  if (sub === 'eur') return 'eur';
-
-  // Heurísticas por texto (GMA/IEB a veces solo dejan la etiqueta en descripción)
-  if (/\b7000\b|dolar\s*7000|usd\s*7000|especie\s*7000/.test(desc)) return 'especie_7000';
-  if (/\b10000\b|dolar\s*10000|especie\s*10000/.test(desc)) return 'especie_10000';
-  if (/cable|dólar\s*cable|dolar\s*cable/.test(desc)) return 'cable';
-  if (/\bmep\b|dolar\s*mep/.test(desc)) return 'mep';
-  if (/money\s*market|\bmmf\b/.test(desc)) return p.moneda === 'ARS' ? 'money_market_ars' : 'money_market_usd';
-
-  if (p.moneda === 'EUR') return 'eur';
-
-  // Pesos: solo cuando no hay subtipo “dólar” ya resuelto arriba
-  if (p.moneda === 'ARS' && (!sub || sub === 'ars')) return 'ars';
-
-  // Offshore u otros USD sin subtipo
-  if (p.moneda === 'USD') return 'mep';
-
-  // ARS con subtipo residual (no debería pasar en cash típico)
-  if (p.moneda === 'ARS') return 'ars';
-
-  return 'mep';
-}
-
-function normalizeCashToken(value: string): string {
-  return value
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\./g, '')
-    .replace(/\s+/g, ' ')
-    .toUpperCase();
 }
 
 const CLASE_OPTIONS: { value: string; label: string }[] = [

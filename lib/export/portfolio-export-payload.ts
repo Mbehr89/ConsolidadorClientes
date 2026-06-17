@@ -371,14 +371,17 @@ export async function buildPortfolioExportPayload(
   const consolidatedInstruments: ConsolidatedInstrumentRow[] = groups.map((g) => {
     const { qty, usd, avgPriceUsd } = groupQtyAndPrices(positions, g.key);
     const bset = brokersSetForKey(positions, g.key);
-    const priceUSD = avgPriceUsd ?? 0;
+    const isCash = g.clase_activo === 'cash';
+    // Cash: cantidad = monto USD (nominal dólares); precio USD = 1; precio ARS = TC.
+    const priceUSD = isCash ? 1 : (avgPriceUsd ?? 0);
     const priceARS = tc != null && priceUSD ? priceUSD * tc : 0;
+    const displayQty = isCash ? usd : qty;
     return {
       ticker: g.ticker ?? '—',
       instrumentName: g.descripcion,
       assetType: g.clase_activo,
       sector: firstPaisForKey(positions, g.key),
-      totalQuantity: qty,
+      totalQuantity: displayQty,
       priceARS: tc != null ? priceARS : 0,
       priceUSD,
       totalARS: tc != null ? usd * tc : 0,

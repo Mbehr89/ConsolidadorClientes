@@ -3,7 +3,7 @@
  * Los datos se derivan de `Position[]` del consolidador.
  */
 import ExcelJS from 'exceljs';
-import { BROKERS, isOffshore } from '@/lib/brokers';
+import { BROKERS } from '@/lib/brokers';
 import {
   buildPortfolioExportPayload,
   type ExportPortfolioOptions,
@@ -17,6 +17,21 @@ import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
 import type { BrokerCode, Position } from '@/lib/schema';
 import type { ClienteSummary } from '@/lib/views/cliente-summary';
+import {
+  arsFromUsdExpr,
+  baseConsolidadaArsFormula,
+  baseConsolidadaUsdFormula,
+  cellRef,
+  cellRefRel,
+  pctOfTotalExpr,
+  portfolioPrecioArsFormula,
+  PORTFOLIO_SHEET,
+  registerTcNamedRange,
+  setFormula,
+  tcOkExpr,
+  type PortfolioSheetMeta,
+  TC_REF,
+} from './excel-formula-helpers';
 
 const ALL_BROKER_CODES: BrokerCode[] = ['MS', 'NETX360', 'GMA', 'IEB'];
 
@@ -108,9 +123,10 @@ export async function buildPortfolioWorkbookBuffer(
   const consolidated = payload.consolidatedInstruments;
   const executiveSummary = payload.executiveSummary;
 
-  buildPortfolioConsolidado(workbook, consolidated, executiveSummary, totalUSD, tc);
+  const portfolioMeta = buildPortfolioConsolidado(workbook, consolidated, executiveSummary, totalUSD, tc);
+  registerTcNamedRange(workbook);
   buildBaseConsolidada(workbook, positions, tc);
-  buildResumenEjecutivo(workbook, executiveSummary, tc);
+  buildResumenEjecutivo(workbook, executiveSummary, tc, portfolioMeta);
 
   const dist = payload.distribution;
   buildSummarySheet(workbook, 'Por_Asset_Class', 'Distribución por Clase de Activo (schema)', dist.byAssetClass, tc);
@@ -124,7 +140,7 @@ export async function buildPortfolioWorkbookBuffer(
   const alerts = payload.qualityControl.alerts;
   const duplicates = payload.qualityControl.crossBrokerDuplicates;
 
-  buildControlCalidad(workbook, qc, alerts, duplicates);
+  buildControlCalidad(workbook, qc, alerts, duplicates, portfolioMeta);
   buildDiccionario(workbook, tc);
   buildPorClienteSheet(workbook, payload.porCliente, totalUSD);
 
@@ -161,7 +177,7 @@ function buildPortfolioConsolidado(
   },
   _totalBookUsd: number,
   tc: number | null
-) {
+): PortfolioSheetMeta {
   const ws = workbook.addWorksheet('Portfolio_Consolidado', { properties: { tabColor: tabArgb(COLORS.violet) } });
 
   ws.mergeCells('A1:K1');
@@ -175,14 +191,14 @@ function buildPortfolioConsolidado(
 
   ws.getCell('H2').value = 'Tipo de Cambio USD/ARS:';
   const tcCell = ws.getCell('I2');
+  tcCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.yellowInput } };
+  tcCell.font = { bold: true, size: 12 };
+  tcCell.numFmt = '#,##0.00';
   if (summary.exchangeRate != null && summary.exchangeRate > 0) {
     tcCell.value = summary.exchangeRate;
-    tcCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.yellowInput } };
-    tcCell.font = { bold: true, size: 12 };
-  } else {
-    tcCell.value = '— (pasar TC en la export o usar IEB/GMA con FX)';
   }
-  ws.getCell('H3').value = '(Modificar TC en upload / opciones de export para columnas en ARS)';
+  ws.getCell('H3').value =
+    '(Celda editable: al cambiar TC se recalculan columnas ARS y pesos vía fórmulas)';
   ws.getCell('H3').font = { italic: true, size: 9, color: { argb: 'FF888888' } };
 
   const headers = [
@@ -205,20 +221,29 @@ function buildPortfolioConsolidado(
     Object.assign(cell, HEADER_STYLE);
   });
 
+  const dataStartRow = 6;
   consolidated.forEach((c, idx) => {
+    const isCash = c.assetType === 'cash';
     const row = ws.addRow([
       c.ticker,
       c.instrumentName,
       c.assetType,
       c.sector,
       c.totalQuantity,
-      tc != null ? c.priceARS : '—',
-      c.priceUSD,
-      tc != null ? c.totalARS : '—',
-      c.totalUSD,
-      c.weight,
+      null,
+      isCash ? 1 : c.priceUSD,
+      null,
+      null,
+      null,
       c.brokersLabel,
     ]);
+    const r = row.number ?? dataStartRow + idx;
+    setFormula(row.getCell(6), portfolioPrecioArsFormula(r, isCash), tc != null ? c.priceARS : undefined);
+    if (isCash) {
+      row.getCell(7).value = 1;
+    }
+    setFormula(row.getCell(9), `E${r}*G${r}`, c.totalUSD);
+    setFormula(row.getCell(8), arsFromUsdExpr(`I${r}`), tc != null ? c.totalARS : undefined);
 
     if (idx % 2 === 1) {
       row.eachCell((cell) => {
@@ -232,22 +257,32 @@ function buildPortfolioConsolidado(
     }
   });
 
-  const totalRow = ws.addRow([
-    'TOTAL PORTFOLIO',
-    '',
-    '',
-    '',
-    '',
-    '',
-    '',
-    tc != null ? summary.totalARS : '—',
-    summary.totalUSD,
-    1,
-    '',
-  ]);
+  const dataEndRow = dataStartRow + Math.max(consolidated.length, 1) - 1;
+  const totalRowNum = consolidated.length > 0 ? dataEndRow + 1 : dataStartRow + 1;
+  const totalRow = ws.addRow(['TOTAL PORTFOLIO', '', '', '', '', '', '', null, null, null, '']);
   totalRow.eachCell((cell) => {
     cell.font = { bold: true, size: 12, color: { argb: COLORS.violetDark } };
   });
+  if (consolidated.length > 0) {
+    setFormula(
+      totalRow.getCell(8),
+      `SUM(H${dataStartRow}:H${dataEndRow})`,
+      tc != null ? summary.totalARS : undefined
+    );
+    setFormula(totalRow.getCell(9), `SUM(I${dataStartRow}:I${dataEndRow})`, summary.totalUSD);
+  } else {
+    totalRow.getCell(8).value = tc != null ? 0 : '—';
+    totalRow.getCell(9).value = 0;
+  }
+  setFormula(totalRow.getCell(10), consolidated.length > 0 ? `SUM(J${dataStartRow}:J${dataEndRow})` : '0', 1);
+
+  for (let r = dataStartRow; r <= dataEndRow; r++) {
+    setFormula(
+      ws.getCell(r, 10),
+      pctOfTotalExpr('I', r, totalRowNum, 'I'),
+      consolidated[r - dataStartRow]?.weight
+    );
+  }
 
   ws.columns = [
     { width: 14 },
@@ -263,16 +298,12 @@ function buildPortfolioConsolidado(
     { width: 35 },
   ];
 
-  for (let i = 6; i <= ws.rowCount; i++) {
+  for (let i = dataStartRow; i <= totalRowNum; i++) {
+    const isCashRow = ws.getCell(`C${i}`).value === 'cash';
     const pr = (v: string) => {
-      if (i === ws.rowCount) {
-        if (v === 'F' && tc == null) return;
-        if (v === 'H' && tc == null) return;
-      }
       const c = ws.getCell(`${v}${i}`);
-      if (c.value === '—') return;
-      if (v === 'F' || v === 'H' || v === 'I' || v === 'G') c.numFmt = '#,##0.00';
-      if (v === 'G') c.numFmt = '#,##0.000000';
+      if (v === 'F' || v === 'H' || v === 'I') c.numFmt = '#,##0.00';
+      if (v === 'G') c.numFmt = isCashRow ? '#,##0.00' : '#,##0.000000';
       if (v === 'J') c.numFmt = '0.0000%';
     };
     pr('F');
@@ -281,6 +312,8 @@ function buildPortfolioConsolidado(
     pr('I');
     pr('J');
   }
+
+  return { dataStartRow, dataEndRow: consolidated.length > 0 ? dataEndRow : dataStartRow, totalRow: totalRowNum };
 }
 
 function buildBaseConsolidada(workbook: ExcelJS.Workbook, positions: Position[], tc: number | null) {
@@ -320,13 +353,27 @@ function buildBaseConsolidada(workbook: ExcelJS.Workbook, positions: Position[],
   let n = 0;
   for (const p of positions) {
     n += 1;
-    const arsAprox =
-      tc != null && p.valor_mercado_usd != null
-        ? p.valor_mercado_usd * tc
-        : isOffshore(p.broker)
-          ? ''
-          : p.valor_mercado_local;
-    ws.addRow([
+    const rowNum = n + 1;
+    const localArs =
+      Number.isFinite(p.valor_mercado_local) ? p.valor_mercado_local : null;
+    const localUsd =
+      p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd) ? p.valor_mercado_usd : null;
+    const qtyPrice =
+      p.precio_mercado != null && Number.isFinite(p.precio_mercado) && Number.isFinite(p.cantidad)
+        ? p.cantidad * p.precio_mercado
+        : null;
+    const isArs = p.moneda === 'ARS';
+    const arsPreview = isArs
+      ? (qtyPrice ?? localArs ?? '')
+      : tc != null && (qtyPrice ?? localUsd) != null
+        ? (qtyPrice ?? localUsd)! * tc
+        : '';
+    const usdPreview = !isArs
+      ? (qtyPrice ?? localUsd ?? '')
+      : tc != null && (qtyPrice ?? localArs) != null
+        ? (qtyPrice ?? localArs)! / tc
+        : '';
+    const row = ws.addRow([
       n,
       p.broker,
       p.titular,
@@ -343,14 +390,26 @@ function buildBaseConsolidada(workbook: ExcelJS.Workbook, positions: Position[],
       p.moneda_subtipo ?? '',
       p.cantidad,
       p.precio_mercado ?? '',
-      arsAprox,
-      p.valor_mercado_usd ?? '',
+      null,
+      null,
       p.accrued_interest_usd ?? '',
       p.pct_portfolio != null ? p.pct_portfolio : '',
       p.fx_source,
       p.warnings.join('; '),
       `${p.source_file} #${p.source_row}`,
     ]);
+    const arsFallback = localArs != null ? String(localArs) : '""';
+    const usdFallback = localUsd != null ? String(localUsd) : '""';
+    setFormula(
+      row.getCell(17),
+      baseConsolidadaArsFormula(rowNum, arsFallback, usdFallback),
+      arsPreview === '' ? undefined : arsPreview
+    );
+    setFormula(
+      row.getCell(18),
+      baseConsolidadaUsdFormula(rowNum, arsFallback, usdFallback),
+      usdPreview === '' ? undefined : usdPreview
+    );
   }
 
   ws.columns.forEach((col, idx) => {
@@ -381,7 +440,8 @@ function buildResumenEjecutivo(
     alertCount: number;
     top10Concentration: number;
   },
-  tc: number | null
+  tc: number | null,
+  portfolioMeta: PortfolioSheetMeta
 ) {
   const ws = workbook.addWorksheet('Resumen_Ejecutivo', { properties: { tabColor: tabArgb(COLORS.gold) } });
 
@@ -395,6 +455,9 @@ function buildResumenEjecutivo(
       : '— (sin TC)';
   ws.getCell('A2').value = `Fecha de consolidación: ${summary.consolidationDate} | TC USD/ARS: ${rateTxt}`;
   Object.assign(ws.getCell('A2'), SUBTITLE_STYLE);
+
+  const portfolioTotalUsdRef = cellRef(portfolioMeta.totalRow, 9, PORTFOLIO_SHEET);
+  const portfolioTotalArsRef = cellRefRel(portfolioMeta.totalRow, 8, PORTFOLIO_SHEET);
 
   const kpis: [string, string | number][] = [
     ['Total Portfolio (ARS)', summary.totalARS],
@@ -423,7 +486,18 @@ function buildResumenEjecutivo(
   });
 
   kpis.forEach(([label, value]) => {
-    ws.addRow([label, value]);
+    const row = ws.addRow([label, value]);
+    const r = row.number ?? ws.rowCount;
+    const s = String(label);
+    if (s.startsWith('Total Portfolio (ARS)')) {
+      setFormula(row.getCell(2), portfolioTotalArsRef, tc != null ? summary.totalARS : undefined);
+    }
+    if (s.startsWith('Total Portfolio (USD)')) {
+      setFormula(row.getCell(2), portfolioTotalUsdRef, summary.totalUSD);
+    }
+    if (s === 'Tipo de Cambio USD/ARS') {
+      setFormula(row.getCell(2), TC_REF, tc ?? undefined);
+    }
   });
 
   ws.getColumn(1).width = 40;
@@ -435,12 +509,10 @@ function buildResumenEjecutivo(
     if (label == null) continue;
     const s = String(label);
     if (s.startsWith('Total Portfolio (ARS)') || s.startsWith('Total Portfolio (USD)')) {
-      const c = ws.getCell(r, 2);
-      if (typeof c.value === 'number') c.numFmt = '#,##0.00';
+      ws.getCell(r, 2).numFmt = '#,##0.00';
     }
     if (s === 'Tipo de Cambio USD/ARS') {
-      const c = ws.getCell(r, 2);
-      if (typeof c.value === 'number') c.numFmt = '#,##0.00';
+      ws.getCell(r, 2).numFmt = '#,##0.00';
     }
     if (s === 'Concentración Top 10 (instrumento)') {
       const c = ws.getCell(r, 2);
@@ -470,26 +542,41 @@ function buildSummarySheet(
 
   const totalARS = data.reduce((s, d) => s + d.totalARS, 0);
   const totalUSD = data.reduce((s, d) => s + d.totalUSD, 0);
-  for (const d of data) {
-    ws.addRow([d.category, tc != null ? d.totalARS : '—', d.totalUSD, d.weight]);
-  }
-  const totalRow = ws.addRow(['TOTAL', totalARS, totalUSD, 1]);
+  const dataStartRow = 4;
+  data.forEach((d, idx) => {
+    const row = ws.addRow([d.category, null, d.totalUSD, null]);
+    const r = row.number ?? dataStartRow + idx;
+    setFormula(row.getCell(2), arsFromUsdExpr(`C${r}`), tc != null ? d.totalARS : undefined);
+  });
+  const dataEndRow = data.length > 0 ? dataStartRow + data.length - 1 : dataStartRow;
+  const totalRowNum = data.length > 0 ? dataEndRow + 1 : dataStartRow + 1;
+  const totalRow = ws.addRow(['TOTAL', null, null, null]);
   totalRow.eachCell((cell) => {
     cell.font = { bold: true, name: 'Calibri' };
   });
+  if (data.length > 0) {
+    setFormula(totalRow.getCell(2), `SUM(B${dataStartRow}:B${dataEndRow})`, tc != null ? totalARS : undefined);
+    setFormula(totalRow.getCell(3), `SUM(C${dataStartRow}:C${dataEndRow})`, totalUSD);
+    setFormula(totalRow.getCell(4), `SUM(D${dataStartRow}:D${dataEndRow})`, 1);
+    for (let r = dataStartRow; r <= dataEndRow; r++) {
+      setFormula(
+        ws.getCell(r, 4),
+        pctOfTotalExpr('C', r, totalRowNum, 'C'),
+        data[r - dataStartRow]?.weight
+      );
+    }
+  } else {
+    totalRow.getCell(2).value = tc != null ? 0 : '—';
+    totalRow.getCell(3).value = 0;
+    totalRow.getCell(4).value = 0;
+  }
 
   ws.getColumn(1).width = 32;
   ws.getColumn(2).width = 22;
   ws.getColumn(3).width = 22;
   ws.getColumn(4).width = 14;
 
-  for (let i = 4; i <= ws.rowCount; i++) {
-    const a = ws.getCell(`A${i}`).value;
-    if (a === 'TOTAL') {
-      if (tc == null) ws.getCell(`B${i}`).value = '—';
-    } else {
-      if (ws.getCell(`B${i}`).value === '—') continue;
-    }
+  for (let i = dataStartRow; i <= totalRowNum; i++) {
     ws.getCell(`B${i}`).numFmt = '#,##0.00';
     ws.getCell(`C${i}`).numFmt = '#,##0.00';
     ws.getCell(`D${i}`).numFmt = '0.0000%';
@@ -500,8 +587,10 @@ function buildControlCalidad(
   workbook: ExcelJS.Workbook,
   qualityControl: QcRow[],
   alerts: AlertRow[],
-  duplicates: DupRow[]
+  duplicates: DupRow[],
+  portfolioMeta: PortfolioSheetMeta
 ) {
+  const portfolioTotalUsdRef = cellRef(portfolioMeta.totalRow, 9, PORTFOLIO_SHEET);
   const ws = workbook.addWorksheet('Control_Calidad', { properties: { tabColor: tabArgb(COLORS.terracotta) } });
 
   ws.mergeCells('A1:F1');
@@ -536,7 +625,14 @@ function buildControlCalidad(
       c.fill = HEADER_STYLE.fill!;
     });
     alerts.forEach((a) => {
-      const row = ws.addRow([a.type, a.detail, a.value, a.weight, a.level, a.recommendation]);
+      const row = ws.addRow([a.type, a.detail, a.value, null, a.level, a.recommendation]);
+      const r = row.number ?? ws.rowCount;
+      setFormula(
+        row.getCell(4),
+        `IF(${portfolioTotalUsdRef}=0,0,C${r}/${portfolioTotalUsdRef})`,
+        a.weight
+      );
+      row.getCell(4).numFmt = '0.00%';
       if (a.level === 'ALTA') {
         row.getCell(5).font = { bold: true, color: { argb: COLORS.alertHigh } };
       } else {
@@ -616,9 +712,29 @@ function buildDiccionario(workbook: ExcelJS.Workbook, tc: number | null) {
       'IEB/GMA: con FX manual. Offshore: ya en USD',
     ],
     [
+      'Base_Consolidada Q / R',
+      'Q = valuación ARS; R = valuación USD. Según columna Moneda (M): nativo = Cantidad×Precio en su moneda',
+      'ARS → Q=O×P y R=Q÷TC. USD → R=O×P y Q=R×TC. TC en Portfolio_Consolidado!I2',
+    ],
+    [
       'Columnas ARS en el informe',
       'Aprox. USD × TC cuando informás un tipo de cambio',
       tcLine,
+    ],
+    [
+      'Portfolio_Consolidado (cash)',
+      'Filas clase «cash»: Cantidad = monto USD; Precio USD = 1; Precio ARS = TC (celda I2)',
+      'Valuación USD = Cantidad × 1; Valuación ARS = Valuación USD × TC',
+    ],
+    [
+      'Portfolio_Consolidado (resto)',
+      'Acciones, bonos, etc.: Cantidad = suma de nominales; Precio USD = cotización; Precio ARS = Precio USD × TC',
+      'Valuación USD = Cantidad × Precio USD',
+    ],
+    [
+      'Fórmulas en el Excel',
+      'Valuaciones, pesos %, flujos de bonos y totales usan fórmulas enlazadas',
+      `TC maestro: ${PORTFOLIO_SHEET}!I2 (nombre TC_USD_ARS). Editá cantidad/precio/TC y el libro recalcula`,
     ],
     [
       'Duplicado cross-broker',
@@ -716,6 +832,8 @@ function buildFlujoBonosSheet(
     });
     headerRowNumber = hRow.number ?? 2;
 
+    const flowDataStartRow = headerRowNumber + 1;
+    let flowIdx = 0;
     for (const { ev, intereses, amortizacion } of data.flowRows) {
       const tNorm = normalizeBondTicker(ev.asset);
       const nominal = nominalByTicker.get(tNorm) ?? 0;
@@ -730,10 +848,15 @@ function buildFlujoBonosSheet(
         ev.amortizationPer100 ?? 0,
         ev.flowPer100,
         ev.residualPctOfPar != null ? ev.residualPctOfPar : '—',
-        intereses,
-        amortizacion,
-        tot,
+        null,
+        null,
+        null,
       ]);
+      const r = row.number ?? flowDataStartRow + flowIdx;
+      flowIdx += 1;
+      setFormula(row.getCell(10), `E${r}*F${r}/100`, intereses);
+      setFormula(row.getCell(11), `E${r}*G${r}/100`, amortizacion);
+      setFormula(row.getCell(12), `J${r}+K${r}`, tot);
       row.getCell(3).numFmt = 'yyyy-mm-dd';
       const residualVal = ev.residualPctOfPar;
       for (const col of [5, 6, 7, 8, 10, 11, 12] as const) {
@@ -799,7 +922,9 @@ function buildPorClienteSheet(workbook: ExcelJS.Workbook, sums: ClienteSummary[]
   hRow.eachCell((c) => {
     Object.assign(c, HEADER_STYLE);
   });
-  for (const c of sums.sort((a, b) => b.aum_usd - a.aum_usd)) {
+  const sorted = [...sums].sort((a, b) => b.aum_usd - a.aum_usd);
+  const dataStartRow = 3;
+  sorted.forEach((c, idx) => {
     const pct = total > 0 ? c.aum_usd / total : 0;
     const row = ws.addRow([
       c.titular,
@@ -809,7 +934,7 @@ function buildPorClienteSheet(workbook: ExcelJS.Workbook, sums: ClienteSummary[]
       c.aum_by_broker['NETX360'] ?? 0,
       c.aum_by_broker['IEB'] ?? 0,
       c.aum_by_broker['GMA'] ?? 0,
-      pct,
+      null,
       c.positions_count,
       c.brokers.length,
       [...c.brokers].sort().join(', '),
@@ -818,6 +943,27 @@ function buildPorClienteSheet(workbook: ExcelJS.Workbook, sums: ClienteSummary[]
     for (const col of [3, 4, 5, 6, 7]) {
       row.getCell(col).numFmt = '#,##0.00';
     }
+  });
+  const dataEndRow = sorted.length > 0 ? dataStartRow + sorted.length - 1 : dataStartRow;
+  const totalRowNum = sorted.length > 0 ? dataEndRow + 1 : dataStartRow + 1;
+  if (sorted.length > 0) {
+    for (let r = dataStartRow; r <= dataEndRow; r++) {
+      setFormula(
+        ws.getCell(r, 8),
+        pctOfTotalExpr('C', r, totalRowNum, 'C'),
+        total > 0 ? (sorted[r - dataStartRow]!.aum_usd / total) : 0
+      );
+    }
+    const totalRow = ws.addRow(['TOTAL', '', null, null, null, null, null, null, '', '', '']);
+    setFormula(totalRow.getCell(3), `SUM(C${dataStartRow}:C${dataEndRow})`, total);
+    setFormula(totalRow.getCell(4), `SUM(D${dataStartRow}:D${dataEndRow})`);
+    setFormula(totalRow.getCell(5), `SUM(E${dataStartRow}:E${dataEndRow})`);
+    setFormula(totalRow.getCell(6), `SUM(F${dataStartRow}:F${dataEndRow})`);
+    setFormula(totalRow.getCell(7), `SUM(G${dataStartRow}:G${dataEndRow})`);
+    setFormula(totalRow.getCell(8), `SUM(H${dataStartRow}:H${dataEndRow})`, 1);
+    totalRow.eachCell((cell) => {
+      cell.font = { bold: true, name: 'Calibri' };
+    });
   }
   ws.getColumn(1).width = 32;
   ws.getColumn(2).width = 10;

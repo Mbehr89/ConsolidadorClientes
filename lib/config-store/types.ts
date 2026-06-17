@@ -49,6 +49,8 @@ export const TickerMetaSchema = z.object({
   fuente: z.enum(['seed', 'admin', 'heuristica']),
   confirmado_por: z.string().nullable(),
   fecha: z.string(),
+  /** Segmento cash / MM (money_market_ars, money_market_usd, mep, etc.) */
+  moneda_subtipo: z.string().nullable().optional(),
 });
 export type TickerMeta = z.infer<typeof TickerMetaSchema>;
 
@@ -66,6 +68,7 @@ export const TickerPendienteSchema = z.object({
   primera_aparicion: z.string(),
   ocurrencias: z.number(),
   estado: z.enum(['pendiente', 'en_revision']),
+  moneda_subtipo_sugerido: z.string().nullable().optional(),
 });
 export type TickerPendiente = z.infer<typeof TickerPendienteSchema>;
 

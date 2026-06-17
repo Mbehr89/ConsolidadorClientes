@@ -14,6 +14,7 @@ export function mapTickersMetadataForParser(
       es_etf: v.es_etf,
       nombre: v.nombre,
       confirmado: v.confirmado,
+      moneda_subtipo: v.moneda_subtipo ?? null,
     };
   }
   return out;
