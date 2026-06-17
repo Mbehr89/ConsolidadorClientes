@@ -115,6 +115,17 @@ const FORMA_OPTIONS: { value: string; label: string }[] = [
 
 const ALL_CASH_BUCKET_KEYS: CashBucketKey[] = CASH_BUCKET_DEFS.map(d => d.key);
 
+/** Suma valor USD solo de líneas cash cuyo bucket está en las columnas visibles. */
+function sumCashUsdForBuckets(
+  titulares: ActivoSummary['titulares'],
+  visibleBuckets: ReadonlySet<CashBucketKey>
+): number {
+  return titulares.reduce((s, t) => {
+    if (t.cash_bucket == null || !visibleBuckets.has(t.cash_bucket)) return s;
+    return s + t.valor_usd;
+  }, 0);
+}
+
 /** Misma metodología que en ficha cliente (precio sucio → `computeBondYieldMetrics`). */
 function computeBondYtmForPosition(
   p: Position,
@@ -259,6 +270,10 @@ export default function ActivosPage() {
   }, [positionsForActivos, bondEventsView]);
 
   const sorted = useMemo(() => {
+    const valorUsd = (a: ActivoSummary) => {
+      const isCash = a.clase_activo === 'cash' || a.ticker.toUpperCase() === 'CASH';
+      return isCash ? sumCashUsdForBuckets(a.titulares, cashColumnKeys) : a.total_usd;
+    };
     return [...filtered].sort((a, b) => {
       const aIsCash = a.clase_activo === 'cash' || a.ticker.toUpperCase() === 'CASH';
       const bIsCash = b.clase_activo === 'cash' || b.ticker.toUpperCase() === 'CASH';
@@ -267,7 +282,7 @@ export default function ActivosPage() {
       let cmp = 0;
       switch (sortField) {
         case 'total_usd':
-          cmp = a.total_usd - b.total_usd;
+          cmp = valorUsd(a) - valorUsd(b);
           break;
         case 'ticker':
           cmp = a.ticker.localeCompare(b.ticker);
@@ -289,7 +304,7 @@ export default function ActivosPage() {
       }
       return sortDir === 'desc' ? -cmp : cmp;
     });
-  }, [filtered, sortField, sortDir, bondYtmByAggKey]);
+  }, [filtered, sortField, sortDir, bondYtmByAggKey, cashColumnKeys]);
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -477,6 +492,7 @@ export default function ActivosPage() {
                       isExpanded={isExpanded}
                       onToggle={() => setExpandedAggKey(isExpanded ? null : activo.aggKey)}
                       visibleCashBuckets={visibleCashBuckets}
+                      cashColumnKeys={cashColumnKeys}
                       tirCell={tirCell}
                     />
                   );
@@ -490,17 +506,22 @@ export default function ActivosPage() {
   );
 }
 
-function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets, tirCell }: {
+function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets, cashColumnKeys, tirCell }: {
   activo: ActivoSummary;
   totalAum: number;
   isExpanded: boolean;
   onToggle: () => void;
   visibleCashBuckets: { key: CashBucketKey; label: string }[];
+  cashColumnKeys: ReadonlySet<CashBucketKey>;
   tirCell: string;
 }) {
   const pct = totalAum > 0 ? (activo.total_usd / totalAum) * 100 : 0;
   const uniqueTitulares = new Set(activo.titulares.map(t => t.cliente_id)).size;
   const isCash = activo.clase_activo === 'cash' || activo.ticker === 'CASH';
+  const displayUsd = isCash
+    ? sumCashUsdForBuckets(activo.titulares, cashColumnKeys)
+    : activo.total_usd;
+  const displayPct = totalAum > 0 ? (displayUsd / totalAum) * 100 : 0;
   const cashRowsByClient = useMemo(() => {
     if (!isCash) return [];
     const byClient = new Map<
@@ -533,30 +554,31 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
       }
       row.brokers.add(t.broker);
       row.cuentas.add(t.cuenta);
-      row.cantidad += t.cantidad;
-      row.total_usd += t.valor_usd;
-      if (t.cash_bucket != null) {
+      if (t.cash_bucket != null && cashColumnKeys.has(t.cash_bucket)) {
+        row.cantidad += t.cantidad;
+        row.total_usd += t.valor_usd;
         row.byBucket[t.cash_bucket] = (row.byBucket[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
       }
     }
 
     return Array.from(byClient.values())
+      .filter((r) => r.total_usd > 0 || visibleCashBuckets.some(({ key }) => r.byBucket[key] != null))
       .map((r) => ({
         ...r,
         brokerLabel: r.brokers.size === 1 ? [...r.brokers][0]! : 'Varios',
         cuentaLabel: r.cuentas.size === 1 ? [...r.cuentas][0]! : `${r.cuentas.size} cuentas`,
       }))
       .sort((a, b) => b.total_usd - a.total_usd);
-  }, [isCash, activo.titulares]);
+  }, [isCash, activo.titulares, cashColumnKeys, visibleCashBuckets]);
 
   const subtotalByBucket = useMemo(() => {
     const subtotals: Partial<Record<CashBucketKey, number>> = {};
     for (const t of activo.titulares) {
-      if (t.cash_bucket == null) continue;
+      if (t.cash_bucket == null || !cashColumnKeys.has(t.cash_bucket)) continue;
       subtotals[t.cash_bucket] = (subtotals[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
     }
     return subtotals;
-  }, [activo.titulares]);
+  }, [activo.titulares, cashColumnKeys]);
 
   return (
     <>
@@ -571,8 +593,8 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
         </td>
         <td className="p-3 text-center">{uniqueTitulares}</td>
         <td className="p-3 text-right font-mono">{isCash ? '—' : activo.total_cantidad.toLocaleString()}</td>
-        <td className="p-3 text-right font-mono font-medium">{formatCurrency(activo.total_usd)}</td>
-        <td className="p-3 text-right text-muted-foreground">{pct.toFixed(1)}%</td>
+        <td className="p-3 text-right font-mono font-medium">{formatCurrency(displayUsd)}</td>
+        <td className="p-3 text-right text-muted-foreground">{(isCash ? displayPct : pct).toFixed(1)}%</td>
       </tr>
       {isExpanded && (
         <tr className="bg-muted/30">
@@ -638,7 +660,7 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
                             {formatCashBucketAmount(key, subtotalByBucket[key] ?? 0)}
                           </td>
                         ))}
-                        <td className="p-1.5 text-right font-mono">{formatCurrency(activo.total_usd)}</td>
+                        <td className="p-1.5 text-right font-mono">{formatCurrency(displayUsd)}</td>
                       </tr>
                     )}
                   </tbody>
