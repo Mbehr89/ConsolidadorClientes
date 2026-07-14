@@ -19,6 +19,9 @@ import {
   type CashBucketKey,
 } from '@/lib/cash-buckets';
 
+/** Todas las posiciones cash se consolidan en una sola fila de activos. */
+const CASH_AGG_KEY = '__CASH__';
+
 interface ActivoSummary {
   /** Clave de agregación (coincide con la del consolidado por posición). */
   aggKey: string;
@@ -42,9 +45,16 @@ interface ActivoSummary {
   }[];
   total_usd: number;
   total_cantidad: number;
+  /** Tickers originales cuando el cash está consolidado en una sola fila. */
+  sourceTickers: string[];
+}
+
+function isCashInstrument(p: Position): boolean {
+  return p.clase_activo === 'cash' || isCashBucketPosition(p);
 }
 
 function positionAggKey(p: Position): string {
+  if (isCashInstrument(p)) return CASH_AGG_KEY;
   return p.ticker ?? `_${p.cusip ?? p.descripcion.slice(0, 30)}`;
 }
 
@@ -53,19 +63,21 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
 
   for (const p of positions) {
     const key = positionAggKey(p);
+    const asCash = key === CASH_AGG_KEY;
 
     let activo = map.get(key);
     if (!activo) {
       activo = {
         aggKey: key,
-        ticker: p.ticker ?? '(sin ticker)',
-        descripcion: p.descripcion,
-        clase_activo: p.clase_activo,
-        forma_legal: p.forma_legal,
+        ticker: asCash ? 'CASH' : (p.ticker ?? '(sin ticker)'),
+        descripcion: asCash ? 'Efectivo consolidado por segmento' : p.descripcion,
+        clase_activo: asCash ? 'cash' : p.clase_activo,
+        forma_legal: asCash ? null : p.forma_legal,
         brokers: [],
         titulares: [],
         total_usd: 0,
         total_cantidad: 0,
+        sourceTickers: [],
       };
       map.set(key, activo);
     }
@@ -82,10 +94,14 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
       valor_local: p.valor_mercado_local,
       moneda: p.moneda,
       moneda_subtipo: p.moneda_subtipo,
-      cash_bucket: isCashBucketPosition(p) ? getCashBucketKey(p) : null,
+      cash_bucket: asCash || isCashBucketPosition(p) ? getCashBucketKey(p) : null,
     });
 
     if (!activo.brokers.includes(p.broker)) activo.brokers.push(p.broker);
+    const srcTicker = (p.ticker ?? '').trim();
+    if (srcTicker && !activo.sourceTickers.includes(srcTicker)) {
+      activo.sourceTickers.push(srcTicker);
+    }
   }
 
   return Array.from(map.values());
@@ -124,6 +140,18 @@ function sumCashUsdForBuckets(
     if (t.cash_bucket == null || !visibleBuckets.has(t.cash_bucket)) return s;
     return s + t.valor_usd;
   }, 0);
+}
+
+function sumCashByBucket(
+  titulares: ActivoSummary['titulares'],
+  cashColumnKeys: ReadonlySet<CashBucketKey>
+): Partial<Record<CashBucketKey, number>> {
+  const subtotals: Partial<Record<CashBucketKey, number>> = {};
+  for (const t of titulares) {
+    if (t.cash_bucket == null || !cashColumnKeys.has(t.cash_bucket)) continue;
+    subtotals[t.cash_bucket] = (subtotals[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
+  }
+  return subtotals;
 }
 
 /** Misma metodología que en ficha cliente (precio sucio → `computeBondYieldMetrics`). */
@@ -181,7 +209,7 @@ export default function ActivosPage() {
   const [sortField, setSortField] = useState<'total_usd' | 'ticker' | 'titulares' | 'tir'>('total_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [expandedAggKey, setExpandedAggKey] = useState<string | null>(null);
-  /** Columnas de efectivo visibles en la tabla de tenedores (multi-selección; por defecto todas). */
+  /** Columnas de efectivo visibles en la fila CASH y en tenedores (multi-selección; por defecto todas). */
   const [cashColumnKeys, setCashColumnKeys] = useState<Set<CashBucketKey>>(
     () => new Set(ALL_CASH_BUCKET_KEYS)
   );
@@ -239,7 +267,8 @@ export default function ActivosPage() {
       const q = search.toLowerCase();
       result = result.filter(a =>
         a.ticker.toLowerCase().includes(q) ||
-        a.descripcion.toLowerCase().includes(q)
+        a.descripcion.toLowerCase().includes(q) ||
+        a.sourceTickers.some(t => t.toLowerCase().includes(q))
       );
     }
 
@@ -271,12 +300,12 @@ export default function ActivosPage() {
 
   const sorted = useMemo(() => {
     const valorUsd = (a: ActivoSummary) => {
-      const isCash = a.clase_activo === 'cash' || a.ticker.toUpperCase() === 'CASH';
+      const isCash = a.aggKey === CASH_AGG_KEY || a.clase_activo === 'cash';
       return isCash ? sumCashUsdForBuckets(a.titulares, cashColumnKeys) : a.total_usd;
     };
     return [...filtered].sort((a, b) => {
-      const aIsCash = a.clase_activo === 'cash' || a.ticker.toUpperCase() === 'CASH';
-      const bIsCash = b.clase_activo === 'cash' || b.ticker.toUpperCase() === 'CASH';
+      const aIsCash = a.aggKey === CASH_AGG_KEY || a.clase_activo === 'cash';
+      const bIsCash = b.aggKey === CASH_AGG_KEY || b.clase_activo === 'cash';
       if (aIsCash !== bIsCash) return aIsCash ? -1 : 1;
 
       let cmp = 0;
@@ -335,6 +364,8 @@ export default function ActivosPage() {
     [filtered]
   );
 
+  const tableColSpan = 10 + visibleCashBuckets.length;
+
   if (!state.hasParsed) {
     return (
       <div>
@@ -348,7 +379,7 @@ export default function ActivosPage() {
     <div className="page-shell">
       <div>
         <h2 className="page-title">Activos ({filtered.length} instrumentos)</h2>
-        <p className="page-subtitle">Exposición agregada por instrumento cross-broker</p>
+        <p className="page-subtitle">Exposición agregada por instrumento cross-broker · cash consolidado por segmento</p>
       </div>
 
       {/* Summary by class */}
@@ -413,12 +444,12 @@ export default function ActivosPage() {
         )}
       </div>
 
-      {/* Columnas visibles para CASH (tenedores) */}
+      {/* Columnas visibles para CASH */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-h3">Columnas cash (tenedores)</CardTitle>
+          <CardTitle className="text-h3">Columnas cash (segmentos)</CardTitle>
           <p className="text-label mt-1">
-            Elegí qué rubros de efectivo mostrar al expandir un instrumento CASH. Solo se listan las columnas activas.
+            Elegí qué rubros mostrar en la fila CASH consolidada y al expandir tenedores. ARS / MM ARS en moneda local; Valor USD queda en dólares.
           </p>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
@@ -474,6 +505,14 @@ export default function ActivosPage() {
                     Titulares {sortField === 'titulares' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
                   <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase">Cant. Total</th>
+                  {visibleCashBuckets.map(({ key, label }) => (
+                    <th
+                      key={key}
+                      className="text-right p-3 text-xs font-medium text-muted-foreground uppercase whitespace-nowrap"
+                    >
+                      {label}
+                    </th>
+                  ))}
                   <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground" onClick={() => toggleSort('total_usd')}>
                     Valor USD {sortField === 'total_usd' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
@@ -494,6 +533,7 @@ export default function ActivosPage() {
                       visibleCashBuckets={visibleCashBuckets}
                       cashColumnKeys={cashColumnKeys}
                       tirCell={tirCell}
+                      tableColSpan={tableColSpan}
                     />
                   );
                 })}
@@ -506,7 +546,7 @@ export default function ActivosPage() {
   );
 }
 
-function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets, cashColumnKeys, tirCell }: {
+function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets, cashColumnKeys, tirCell, tableColSpan }: {
   activo: ActivoSummary;
   totalAum: number;
   isExpanded: boolean;
@@ -514,14 +554,19 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
   visibleCashBuckets: { key: CashBucketKey; label: string }[];
   cashColumnKeys: ReadonlySet<CashBucketKey>;
   tirCell: string;
+  tableColSpan: number;
 }) {
-  const pct = totalAum > 0 ? (activo.total_usd / totalAum) * 100 : 0;
-  const uniqueTitulares = new Set(activo.titulares.map(t => t.cliente_id)).size;
-  const isCash = activo.clase_activo === 'cash' || activo.ticker === 'CASH';
+  const isCash = activo.aggKey === CASH_AGG_KEY || activo.clase_activo === 'cash';
   const displayUsd = isCash
     ? sumCashUsdForBuckets(activo.titulares, cashColumnKeys)
     : activo.total_usd;
   const displayPct = totalAum > 0 ? (displayUsd / totalAum) * 100 : 0;
+  const uniqueTitulares = new Set(activo.titulares.map(t => t.cliente_id)).size;
+  const cashByBucket = useMemo(
+    () => (isCash ? sumCashByBucket(activo.titulares, cashColumnKeys) : {}),
+    [isCash, activo.titulares, cashColumnKeys]
+  );
+
   const cashRowsByClient = useMemo(() => {
     if (!isCash) return [];
     const byClient = new Map<
@@ -571,20 +616,23 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
       .sort((a, b) => b.total_usd - a.total_usd);
   }, [isCash, activo.titulares, cashColumnKeys, visibleCashBuckets]);
 
-  const subtotalByBucket = useMemo(() => {
-    const subtotals: Partial<Record<CashBucketKey, number>> = {};
-    for (const t of activo.titulares) {
-      if (t.cash_bucket == null || !cashColumnKeys.has(t.cash_bucket)) continue;
-      subtotals[t.cash_bucket] = (subtotals[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
-    }
-    return subtotals;
-  }, [activo.titulares, cashColumnKeys]);
+  const descTitle =
+    isCash && activo.sourceTickers.length > 0
+      ? `Incluye: ${activo.sourceTickers.join(', ')}`
+      : activo.descripcion;
 
   return (
     <>
       <tr className="border-b border-border/50 hover:bg-muted/50 cursor-pointer" onClick={onToggle}>
         <td className="p-3 font-mono font-medium">{activo.ticker}</td>
-        <td className="p-3 text-muted-foreground max-w-[250px] truncate" title={activo.descripcion}>{activo.descripcion}</td>
+        <td className="p-3 text-muted-foreground max-w-[250px] truncate" title={descTitle}>
+          {activo.descripcion}
+          {isCash && activo.sourceTickers.length > 1 && (
+            <span className="ml-1 text-[10px] text-muted-foreground/80">
+              ({activo.sourceTickers.length} tickers)
+            </span>
+          )}
+        </td>
         <td className="p-3"><Badge variant="secondary" className="text-xs">{activo.clase_activo}</Badge></td>
         <td className="p-3 text-xs text-muted-foreground">{activo.forma_legal ?? '—'}</td>
         <td className="p-3 text-right font-mono tabular-nums text-muted-foreground">{tirCell}</td>
@@ -593,14 +641,28 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
         </td>
         <td className="p-3 text-center">{uniqueTitulares}</td>
         <td className="p-3 text-right font-mono">{isCash ? '—' : activo.total_cantidad.toLocaleString()}</td>
+        {visibleCashBuckets.map(({ key }) => (
+          <td key={key} className="p-3 text-right font-mono whitespace-nowrap">
+            {isCash && cashByBucket[key] != null
+              ? formatCashBucketAmount(key, cashByBucket[key] ?? 0)
+              : '—'}
+          </td>
+        ))}
         <td className="p-3 text-right font-mono font-medium">{formatCurrency(displayUsd)}</td>
-        <td className="p-3 text-right text-muted-foreground">{(isCash ? displayPct : pct).toFixed(1)}%</td>
+        <td className="p-3 text-right text-muted-foreground">{displayPct.toFixed(1)}%</td>
       </tr>
       {isExpanded && (
         <tr className="bg-muted/30">
-          <td colSpan={10} className="p-0">
+          <td colSpan={tableColSpan} className="p-0">
             <div className="p-4">
-              <p className="text-xs font-medium text-muted-foreground mb-2 uppercase">Tenedores de {activo.ticker}</p>
+              <p className="text-xs font-medium text-muted-foreground mb-2 uppercase">
+                Tenedores de {activo.ticker}
+                {isCash && activo.sourceTickers.length > 0 && (
+                  <span className="ml-2 font-normal normal-case">
+                    · fuentes: {activo.sourceTickers.join(', ')}
+                  </span>
+                )}
+              </p>
               <div className="max-h-[380px] overflow-auto rounded-md border border-border/50">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80">
@@ -657,7 +719,7 @@ function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets,
                         <td className="p-1.5" />
                         {visibleCashBuckets.map(({ key }) => (
                           <td key={key} className="p-1.5 text-right font-mono">
-                            {formatCashBucketAmount(key, subtotalByBucket[key] ?? 0)}
+                            {formatCashBucketAmount(key, cashByBucket[key] ?? 0)}
                           </td>
                         ))}
                         <td className="p-1.5 text-right font-mono">{formatCurrency(displayUsd)}</td>
@@ -678,13 +740,18 @@ function getCashCellValue(
   t: { valor_usd: number; valor_local: number; moneda: string },
   bucket: CashBucketKey
 ): number {
-  if (bucket === 'ars') {
+  // Columnas ARS / MM ARS: monto en moneda local. VALOR USD ya expresa el dólar.
+  if (bucket === 'ars' || bucket === 'money_market_ars') {
     return t.moneda === 'ARS' ? t.valor_local : t.valor_usd;
+  }
+  if (bucket === 'eur') {
+    return t.moneda === 'EUR' ? t.valor_local : t.valor_usd;
   }
   return t.valor_usd;
 }
 
 function formatCashBucketAmount(bucket: CashBucketKey, value: number): string {
   if (bucket === 'ars' || bucket === 'money_market_ars') return formatCurrency(value, 'ARS');
+  if (bucket === 'eur') return formatCurrency(value, 'EUR');
   return formatCurrency(value);
 }
