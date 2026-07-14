@@ -10,6 +10,9 @@ import { issuerByTickerFromEvents, uniqueTickers } from '@/lib/bonds/parse-calen
 import { issuerLabel } from '@/lib/bonds/issuers';
 import { filterBondEventsByViewMode, tickersWithBothRegimes, type BondFlowViewMode } from '@/lib/bonds/flow-regime';
 import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
+import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
+import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/flow-report';
+import { exportModelPortfolioFlowExcel } from '@/lib/export/model-portfolio-flow-excel';
 import { formatCurrency } from '@/lib/utils';
 
 const PORTFOLIO_LS = 'consolidador-bond-portfolio-v1';
@@ -120,6 +123,11 @@ export default function BonosPage() {
   const [portfolioFxInput, setPortfolioFxInput] = useState('');
   const [preciosCarteraArs, setPreciosCarteraArs] = useState(false);
   const [bondFlowViewMode, setBondFlowViewMode] = useState<BondFlowViewMode>('normal');
+  const [flowPdfSections, setFlowPdfSections] = useState({
+    monthlyByBond: true,
+    annualDualAxis: true,
+    flowTable: true,
+  });
 
   const portfolioRef = useRef<PortfolioLine[]>([]);
   const totalCarteraRef = useRef('');
@@ -392,6 +400,89 @@ export default function BonosPage() {
     };
   }, [portfolioLinesWithMetrics]);
 
+  /** VN implícito por ticker (monto total × peso / precio). Sin monto: VN relativo = peso %. */
+  const portfolioNominalByTicker = useMemo(() => {
+    const map = new Map<string, number>();
+    let absolute = false;
+    for (const { line, dirtyForLine } of portfolioLinesWithMetrics) {
+      if (line.weightPct <= 0) continue;
+      const t = normalizeBondTicker(line.ticker);
+      if (!t) continue;
+      if (
+        totalCarteraNUsd != null &&
+        portfolioPositiveWeightSum > 0 &&
+        dirtyForLine > 0
+      ) {
+        const allocUsd = totalCarteraNUsd * (line.weightPct / portfolioPositiveWeightSum);
+        const nominal = (allocUsd * 100) / dirtyForLine;
+        if (Number.isFinite(nominal) && nominal > 0) {
+          map.set(t, (map.get(t) ?? 0) + nominal);
+          absolute = true;
+        }
+      }
+    }
+    if (!absolute) {
+      for (const { line } of portfolioLinesWithMetrics) {
+        if (line.weightPct <= 0) continue;
+        const t = normalizeBondTicker(line.ticker);
+        if (!t) continue;
+        // Relativo: 1 punto de peso ≈ 1 VN (sirve para ver timing / mix).
+        map.set(t, (map.get(t) ?? 0) + line.weightPct);
+      }
+    }
+    return { map, absolute };
+  }, [portfolioLinesWithMetrics, totalCarteraNUsd, portfolioPositiveWeightSum]);
+
+  const portfolioModelFlows = useMemo(() => {
+    const { map: nominalByTicker, absolute } = portfolioNominalByTicker;
+    const portfolioTickers = new Set([...nominalByTicker.keys()]);
+    const v0 = Date.UTC(
+      valuationAsDate.getUTCFullYear(),
+      valuationAsDate.getUTCMonth(),
+      valuationAsDate.getUTCDate()
+    );
+    const rows = eventsView
+      .filter((ev) => {
+        const t = normalizeBondTicker(ev.asset);
+        if (!portfolioTickers.has(t)) return false;
+        return ev.date.getTime() >= v0;
+      })
+      .map((ev) => {
+        const nominal = nominalByTicker.get(normalizeBondTicker(ev.asset)) ?? 0;
+        const intereses = ((ev.couponPer100 ?? 0) / 100) * nominal;
+        const amortizacion = ((ev.amortizationPer100 ?? 0) / 100) * nominal;
+        return { ev, intereses, amortizacion };
+      })
+      .sort((a, b) => {
+        const byDate = a.ev.date.getTime() - b.ev.date.getTime();
+        if (byDate !== 0) return byDate;
+        return a.ev.asset.localeCompare(b.ev.asset);
+      });
+    return {
+      rows,
+      absolute,
+      mappedTickers: new Set(rows.map((r) => normalizeBondTicker(r.ev.asset))).size,
+      totalTickers: portfolioTickers.size,
+    };
+  }, [portfolioNominalByTicker, eventsView, valuationAsDate]);
+
+  const portfolioFlowTotalsByCurrency = useMemo(() => {
+    const totals = new Map<string, { intereses: number; amortizacion: number }>();
+    for (const r of portfolioModelFlows.rows) {
+      const c = r.ev.currency.toUpperCase();
+      const prev = totals.get(c) ?? { intereses: 0, amortizacion: 0 };
+      prev.intereses += r.intereses;
+      prev.amortizacion += r.amortizacion;
+      totals.set(c, prev);
+    }
+    return [...totals.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [portfolioModelFlows]);
+
+  const portfolioFlowFutureValue = useMemo(
+    () => portfolioModelFlows.rows.reduce((s, r) => s + r.intereses + r.amortizacion, 0),
+    [portfolioModelFlows]
+  );
+
   const addToPortfolio = (ticker: string) => {
     if (portfolio.some((p) => p.ticker === ticker)) return;
     const next = [...portfolio, { ticker, weightPct: 0, dirtyPricePer100: dirtyPrice }];
@@ -640,7 +731,8 @@ export default function BonosPage() {
           <CardDescription>
             Cada bono puede tener su propio precio sucio (por 100 VN). Podés cargar el monto total de la cartera y los
             precios de cartera en pesos usando el tipo de cambio de la cartera (ARS por USD); si el TC queda vacío, se
-            usa el mismo que en «USD/ARS» de valuación. Las TIR se siguen resolviendo en USD por debajo.
+            usa el mismo que en «USD/ARS» de valuación. Las TIR se siguen resolviendo en USD por debajo. Con pesos y
+            monto total, abajo se proyecta el flujo de cupones y amortizaciones de la cartera.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -819,8 +911,307 @@ export default function BonosPage() {
               </div>
             </div>
           )}
+
+          {portfolio.length > 0 && portfolioPositiveWeightSum > 0 && (
+            <div className="space-y-4 rounded-lg border border-border/70 p-4 print:border-0 print:p-0">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-caption">Flujo de la cartera modelo</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Proyección desde la fecha de valuación · tickers con calendario:{' '}
+                    {portfolioModelFlows.mappedTickers}/{portfolioModelFlows.totalTickers}
+                    {!portfolioModelFlows.absolute && (
+                      <span className="text-amber-700">
+                        {' '}
+                        · Montos relativos (1 punto de peso ≈ 1 VN). Ingresá monto total para flujo en dinero.
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 print:hidden">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={portfolioModelFlows.rows.length === 0}
+                    onClick={() => {
+                      const nominalByTicker = portfolioNominalByTicker.map;
+                      exportModelPortfolioFlowExcel({
+                        meta: {
+                          valuationDate,
+                          // Solo incluir TC si precios en ARS o monto total en ARS.
+                          fxUsdArs:
+                            preciosCarteraArs || monedaTotalCartera === 'ARS' ? fxCartera : null,
+                          flowMode: bondFlowViewMode,
+                          absoluteNominals: portfolioModelFlows.absolute,
+                          totalCarteraUsd: totalCarteraNUsd,
+                          portfolioYtm: portfolioAgg?.ytm ?? null,
+                          portfolioDuration: portfolioAgg?.modifiedDuration ?? null,
+                        },
+                        lines: portfolioLinesWithMetrics
+                          .filter(({ line }) => line.weightPct > 0)
+                          .map(({ line, dirtyForLine, met }) => {
+                            const allocUsd =
+                              totalCarteraNUsd != null &&
+                              portfolioPositiveWeightSum > 0 &&
+                              line.weightPct > 0
+                                ? totalCarteraNUsd * (line.weightPct / portfolioPositiveWeightSum)
+                                : null;
+                            const needFx = preciosCarteraArs || monedaTotalCartera === 'ARS';
+                            const allocArs =
+                              needFx && allocUsd != null && fxCartera > 0
+                                ? allocUsd * fxCartera
+                                : null;
+                            const impliedNominal =
+                              allocUsd != null && allocUsd > 0 && dirtyForLine > 0
+                                ? (allocUsd * 100) / dirtyForLine
+                                : null;
+                            return {
+                              ticker: line.ticker,
+                              weightPct: line.weightPct,
+                              dirtyPricePer100: dirtyForLine,
+                              allocUsd,
+                              allocArs,
+                              impliedNominal,
+                              ytm: met?.ytmAnnualEffective ?? null,
+                              modifiedDuration: met?.modifiedDuration ?? null,
+                            };
+                          }),
+                        rows: portfolioModelFlows.rows.map((r) => {
+                          const t = normalizeBondTicker(r.ev.asset);
+                          return {
+                            ticker: r.ev.asset,
+                            issuer: r.ev.issuer,
+                            date: fmtIsoDate(r.ev.date),
+                            currency: r.ev.currency,
+                            nominal: nominalByTicker.get(t) ?? 0,
+                            couponPer100: r.ev.couponPer100 ?? 0,
+                            amortizationPer100: r.ev.amortizationPer100 ?? 0,
+                            flowPer100: r.ev.flowPer100,
+                            residualPctOfPar: r.ev.residualPctOfPar,
+                            intereses: r.intereses,
+                            amortizacion: r.amortizacion,
+                          };
+                        }),
+                      });
+                    }}
+                  >
+                    Exportar Excel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      portfolioModelFlows.rows.length === 0 ||
+                      (!flowPdfSections.monthlyByBond &&
+                        !flowPdfSections.annualDualAxis &&
+                        !flowPdfSections.flowTable)
+                    }
+                    onClick={() =>
+                      exportFlowReportPdf({
+                        title: 'Flujo de bonos — Cartera modelo',
+                        rows: portfolioModelFlows.rows.map((r) => ({
+                          ticker: r.ev.asset,
+                          date: fmtIsoDate(r.ev.date),
+                          currency: r.ev.currency,
+                          intereses: r.intereses,
+                          amortizacion: r.amortizacion,
+                        })),
+                        totalsByCurrency: portfolioFlowTotalsByCurrency,
+                        portfolioMetrics: {
+                          ytm: portfolioAgg?.ytm ?? null,
+                          duration: portfolioAgg?.modifiedDuration ?? null,
+                        },
+                        sections: flowPdfSections,
+                      })
+                    }
+                  >
+                    Exportar flujo PDF
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={portfolioModelFlows.rows.length === 0}
+                    onClick={() =>
+                      exportExecutiveFlowReportPdf({
+                        portfolioId: 'cartera-modelo',
+                        clientName: 'Cartera modelo',
+                        rows: portfolioModelFlows.rows.map((r) => ({
+                          ticker: r.ev.asset,
+                          date: fmtIsoDate(r.ev.date),
+                          currency: r.ev.currency,
+                          intereses: r.intereses,
+                          amortizacion: r.amortizacion,
+                        })),
+                        tirValue: portfolioAgg?.ytm ?? null,
+                        durationValue: portfolioAgg?.modifiedDuration ?? null,
+                        currentValueUsd: totalCarteraNUsd ?? undefined,
+                        futureValueUsd: portfolioModelFlows.absolute
+                          ? portfolioFlowFutureValue
+                          : undefined,
+                      })
+                    }
+                  >
+                    Exportar PDF ejecutivo
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mb-1 flex flex-wrap gap-3 text-xs text-muted-foreground print:hidden">
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={flowPdfSections.monthlyByBond}
+                    onChange={(e) =>
+                      setFlowPdfSections((s) => ({ ...s, monthlyByBond: e.target.checked }))
+                    }
+                  />
+                  Gráfico mensual por bono
+                </label>
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={flowPdfSections.annualDualAxis}
+                    onChange={(e) =>
+                      setFlowPdfSections((s) => ({ ...s, annualDualAxis: e.target.checked }))
+                    }
+                  />
+                  Vencimientos anuales
+                </label>
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={flowPdfSections.flowTable}
+                    onChange={(e) =>
+                      setFlowPdfSections((s) => ({ ...s, flowTable: e.target.checked }))
+                    }
+                  />
+                  Tabla de flujo
+                </label>
+              </div>
+
+              {portfolioFlowTotalsByCurrency.length > 0 && (
+                <div className="flex flex-wrap gap-4 rounded-md border border-border/60 bg-muted/20 p-3 text-sm">
+                  {portfolioFlowTotalsByCurrency.map(([currency, t]) => (
+                    <div key={currency} className="font-mono">
+                      <span className="text-muted-foreground">{currency}</span> · Int.{' '}
+                      {formatPaymentAmount(t.intereses)} · Amort. {formatPaymentAmount(t.amortizacion)} ·
+                      Total {formatPaymentAmount(t.intereses + t.amortizacion)}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {portfolioFlowTotalsByCurrency.length > 0 && (
+                <div className="space-y-4">
+                  {portfolioFlowTotalsByCurrency.map(([currency]) => {
+                    const rows = portfolioModelFlows.rows.filter(
+                      (r) => r.ev.currency.toUpperCase() === currency.toUpperCase()
+                    );
+                    const monthMap = new Map<string, { intereses: number; amortizacion: number }>();
+                    for (const r of rows) {
+                      const month = fmtIsoDate(r.ev.date).slice(0, 7);
+                      const prev = monthMap.get(month) ?? { intereses: 0, amortizacion: 0 };
+                      prev.intereses += r.intereses;
+                      prev.amortizacion += r.amortizacion;
+                      monthMap.set(month, prev);
+                    }
+                    const monthlyRows = [...monthMap.entries()]
+                      .map(([month, v]) => ({ month, ...v }))
+                      .sort((a, b) => a.month.localeCompare(b.month));
+                    const max = Math.max(...monthlyRows.map((r) => r.intereses + r.amortizacion), 1);
+                    return (
+                      <div key={currency} className="rounded-md border border-border/60 p-3">
+                        <p className="mb-2 text-sm font-medium">Gráfico mensual {currency}</p>
+                        <div className="space-y-1">
+                          {monthlyRows.slice(0, 48).map((r, i) => {
+                            const total = r.intereses + r.amortizacion;
+                            const wt = max > 0 ? (total / max) * 100 : 0;
+                            const wi = total > 0 ? (r.intereses / total) * wt : 0;
+                            const wa = total > 0 ? (r.amortizacion / total) * wt : 0;
+                            const minSegment = 0.8;
+                            const wii = r.intereses > 0 ? Math.max(wi, minSegment) : 0;
+                            const waa = r.amortizacion > 0 ? Math.max(wa, minSegment) : 0;
+                            const scale = wii + waa > 0 ? Math.min(1, wt / (wii + waa)) : 1;
+                            return (
+                              <div
+                                key={`${currency}-${i}`}
+                                className="grid grid-cols-[100px_1fr_120px] items-center gap-2 text-xs"
+                              >
+                                <span className="truncate text-muted-foreground">{r.month}</span>
+                                <div className="flex h-2 overflow-hidden rounded bg-muted">
+                                  <div className="bg-blue-500" style={{ width: `${wii * scale}%` }} />
+                                  <div className="bg-emerald-500" style={{ width: `${waa * scale}%` }} />
+                                </div>
+                                <span className="text-right font-mono">{formatPaymentAmount(total)}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-2 text-[10px] text-muted-foreground">
+                          <span className="inline-block h-2 w-2 rounded-sm bg-blue-500 align-middle" /> Intereses{' '}
+                          <span className="ml-2 inline-block h-2 w-2 rounded-sm bg-emerald-500 align-middle" />{' '}
+                          Amortización
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="overflow-auto max-h-[420px]">
+                <table className="w-full min-w-[820px] text-sm">
+                  <thead className="sticky top-0 bg-card border-b">
+                    <tr>
+                      <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Ticker</th>
+                      <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Fecha</th>
+                      <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Moneda</th>
+                      <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Intereses</th>
+                      <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Amortización</th>
+                      <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {portfolioModelFlows.rows.map((row, i) => (
+                      <tr
+                        key={`${row.ev.asset}-${row.ev.date.toISOString()}-${i}`}
+                        className="border-b border-border/50"
+                      >
+                        <td className="p-2 font-mono">{row.ev.asset}</td>
+                        <td className="p-2">{fmtIsoDate(row.ev.date)}</td>
+                        <td className="p-2">{row.ev.currency}</td>
+                        <td className="p-2 text-right font-mono">{formatPaymentAmount(row.intereses)}</td>
+                        <td className="p-2 text-right font-mono">{formatPaymentAmount(row.amortizacion)}</td>
+                        <td className="p-2 text-right font-mono">
+                          {formatPaymentAmount(row.intereses + row.amortizacion)}
+                        </td>
+                      </tr>
+                    ))}
+                    {portfolioModelFlows.rows.length === 0 && (
+                      <tr>
+                        <td className="p-3 text-muted-foreground" colSpan={6}>
+                          No hay flujos futuros mapeados para los bonos de la cartera (revisá pesos &gt; 0, calendario y
+                          fecha de valuación).
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function fmtIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function formatPaymentAmount(v: number): string {
+  return v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
