@@ -152,3 +152,28 @@ export function getCashBucketKey(p: Position): CashBucketKey {
 export function cashBucketLabel(key: CashBucketKey): string {
   return CASH_BUCKET_DEFS.find((d) => d.key === key)?.label ?? key;
 }
+
+/** Monto a mostrar en columna de bucket (ARS/MM ARS/EUR en local; resto en USD). */
+export function getCashCellValue(
+  t: { valor_usd: number; valor_local: number; moneda: string },
+  bucket: CashBucketKey
+): number {
+  if (bucket === 'ars' || bucket === 'money_market_ars') {
+    return t.moneda === 'ARS' ? t.valor_local : t.valor_usd;
+  }
+  if (bucket === 'eur') {
+    return t.moneda === 'EUR' ? t.valor_local : t.valor_usd;
+  }
+  return t.valor_usd;
+}
+
+export function formatCashBucketAmount(
+  bucket: CashBucketKey,
+  value: number,
+  formatCurrency: (value: number, currency?: string) => string
+): string {
+  if (bucket === 'ars' || bucket === 'money_market_ars') return formatCurrency(value, 'ARS');
+  if (bucket === 'eur') return formatCurrency(value, 'EUR');
+  return formatCurrency(value);
+}
+

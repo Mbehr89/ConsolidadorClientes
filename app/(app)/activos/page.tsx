@@ -2,9 +2,9 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useConsolidation } from '@/lib/context/consolidation-context';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatCompact, formatCurrency } from '@/lib/utils';
+import { formatCompact, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
 import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
@@ -12,15 +12,7 @@ import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
 import { filterBondEventsByViewMode } from '@/lib/bonds/flow-regime';
 import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
 import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
-import {
-  CASH_BUCKET_DEFS,
-  getCashBucketKey,
-  isCashBucketPosition,
-  type CashBucketKey,
-} from '@/lib/cash-buckets';
-
-/** Todas las posiciones cash se consolidan en una sola fila de activos. */
-const CASH_AGG_KEY = '__CASH__';
+import { isCashBucketPosition } from '@/lib/cash-buckets';
 
 interface ActivoSummary {
   /** Clave de agregación (coincide con la del consolidado por posición). */
@@ -37,16 +29,9 @@ interface ActivoSummary {
     cuenta: string;
     cantidad: number;
     valor_usd: number;
-    valor_local: number;
-    moneda: string;
-    moneda_subtipo: string | null;
-    /** Bucket estable para columnas; null si no es cash */
-    cash_bucket: CashBucketKey | null;
   }[];
   total_usd: number;
   total_cantidad: number;
-  /** Tickers originales cuando el cash está consolidado en una sola fila. */
-  sourceTickers: string[];
 }
 
 function isCashInstrument(p: Position): boolean {
@@ -54,7 +39,6 @@ function isCashInstrument(p: Position): boolean {
 }
 
 function positionAggKey(p: Position): string {
-  if (isCashInstrument(p)) return CASH_AGG_KEY;
   return p.ticker ?? `_${p.cusip ?? p.descripcion.slice(0, 30)}`;
 }
 
@@ -62,22 +46,21 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
   const map = new Map<string, ActivoSummary>();
 
   for (const p of positions) {
-    const key = positionAggKey(p);
-    const asCash = key === CASH_AGG_KEY;
+    if (isCashInstrument(p)) continue;
 
+    const key = positionAggKey(p);
     let activo = map.get(key);
     if (!activo) {
       activo = {
         aggKey: key,
-        ticker: asCash ? 'CASH' : (p.ticker ?? '(sin ticker)'),
-        descripcion: asCash ? 'Efectivo consolidado por segmento' : p.descripcion,
-        clase_activo: asCash ? 'cash' : p.clase_activo,
-        forma_legal: asCash ? null : p.forma_legal,
+        ticker: p.ticker ?? '(sin ticker)',
+        descripcion: p.descripcion,
+        clase_activo: p.clase_activo,
+        forma_legal: p.forma_legal,
         brokers: [],
         titulares: [],
         total_usd: 0,
         total_cantidad: 0,
-        sourceTickers: [],
       };
       map.set(key, activo);
     }
@@ -91,17 +74,9 @@ function buildActivoSummaries(positions: Position[]): ActivoSummary[] {
       cuenta: p.cuenta,
       cantidad: p.cantidad,
       valor_usd: p.valor_mercado_usd ?? 0,
-      valor_local: p.valor_mercado_local,
-      moneda: p.moneda,
-      moneda_subtipo: p.moneda_subtipo,
-      cash_bucket: asCash || isCashBucketPosition(p) ? getCashBucketKey(p) : null,
     });
 
     if (!activo.brokers.includes(p.broker)) activo.brokers.push(p.broker);
-    const srcTicker = (p.ticker ?? '').trim();
-    if (srcTicker && !activo.sourceTickers.includes(srcTicker)) {
-      activo.sourceTickers.push(srcTicker);
-    }
   }
 
   return Array.from(map.values());
@@ -112,7 +87,6 @@ const CLASE_OPTIONS: { value: string; label: string }[] = [
   { value: 'equity', label: 'Equity (incl. CEDEAR)' },
   { value: 'bond', label: 'Bond' },
   { value: 'etf', label: 'ETF' },
-  { value: 'cash', label: 'Cash' },
   { value: 'fund', label: 'Fund' },
   { value: 'on', label: 'ON' },
   { value: 'option', label: 'Option' },
@@ -128,31 +102,6 @@ const FORMA_OPTIONS: { value: string; label: string }[] = [
   { value: 'on_local', label: 'ON Local' },
   { value: 'bono_local', label: 'Bono Local' },
 ];
-
-const ALL_CASH_BUCKET_KEYS: CashBucketKey[] = CASH_BUCKET_DEFS.map(d => d.key);
-
-/** Suma valor USD solo de líneas cash cuyo bucket está en las columnas visibles. */
-function sumCashUsdForBuckets(
-  titulares: ActivoSummary['titulares'],
-  visibleBuckets: ReadonlySet<CashBucketKey>
-): number {
-  return titulares.reduce((s, t) => {
-    if (t.cash_bucket == null || !visibleBuckets.has(t.cash_bucket)) return s;
-    return s + t.valor_usd;
-  }, 0);
-}
-
-function sumCashByBucket(
-  titulares: ActivoSummary['titulares'],
-  cashColumnKeys: ReadonlySet<CashBucketKey>
-): Partial<Record<CashBucketKey, number>> {
-  const subtotals: Partial<Record<CashBucketKey, number>> = {};
-  for (const t of titulares) {
-    if (t.cash_bucket == null || !cashColumnKeys.has(t.cash_bucket)) continue;
-    subtotals[t.cash_bucket] = (subtotals[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
-  }
-  return subtotals;
-}
 
 /** Misma metodología que en ficha cliente (precio sucio → `computeBondYieldMetrics`). */
 function computeBondYtmForPosition(
@@ -209,26 +158,6 @@ export default function ActivosPage() {
   const [sortField, setSortField] = useState<'total_usd' | 'ticker' | 'titulares' | 'tir'>('total_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [expandedAggKey, setExpandedAggKey] = useState<string | null>(null);
-  /** Columnas de efectivo visibles en la fila CASH y en tenedores (multi-selección; por defecto todas). */
-  const [cashColumnKeys, setCashColumnKeys] = useState<Set<CashBucketKey>>(
-    () => new Set(ALL_CASH_BUCKET_KEYS)
-  );
-
-  const visibleCashBuckets = useMemo(
-    () => CASH_BUCKET_DEFS.filter(d => cashColumnKeys.has(d.key)),
-    [cashColumnKeys]
-  );
-
-  const toggleCashColumn = (key: CashBucketKey) => {
-    setCashColumnKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const selectAllCashColumns = () => setCashColumnKeys(new Set(ALL_CASH_BUCKET_KEYS));
 
   useEffect(() => {
     let cancelled = false;
@@ -252,10 +181,13 @@ export default function ActivosPage() {
   );
 
   const positionsForActivos = useMemo(() => {
-    if (filterAdvisor === 'all') return state.allPositions;
-    return state.allPositions.filter(
-      (p) => (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor
-    );
+    const base =
+      filterAdvisor === 'all'
+        ? state.allPositions
+        : state.allPositions.filter(
+            (p) => (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor
+          );
+    return base.filter((p) => !isCashInstrument(p));
   }, [state.allPositions, state.advisorsByCliente, filterAdvisor]);
 
   const activos = useMemo(() => buildActivoSummaries(positionsForActivos), [positionsForActivos]);
@@ -265,16 +197,14 @@ export default function ActivosPage() {
 
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter(a =>
-        a.ticker.toLowerCase().includes(q) ||
-        a.descripcion.toLowerCase().includes(q) ||
-        a.sourceTickers.some(t => t.toLowerCase().includes(q))
+      result = result.filter(
+        (a) => a.ticker.toLowerCase().includes(q) || a.descripcion.toLowerCase().includes(q)
       );
     }
 
-    if (filterClase !== 'all') result = result.filter(a => a.clase_activo === filterClase);
-    if (filterForma !== 'all') result = result.filter(a => a.forma_legal === filterForma);
-    if (filterBroker !== 'all') result = result.filter(a => a.brokers.includes(filterBroker));
+    if (filterClase !== 'all') result = result.filter((a) => a.clase_activo === filterClase);
+    if (filterForma !== 'all') result = result.filter((a) => a.forma_legal === filterForma);
+    if (filterBroker !== 'all') result = result.filter((a) => a.brokers.includes(filterBroker));
 
     return result;
   }, [activos, search, filterClase, filterForma, filterBroker]);
@@ -299,19 +229,11 @@ export default function ActivosPage() {
   }, [positionsForActivos, bondEventsView]);
 
   const sorted = useMemo(() => {
-    const valorUsd = (a: ActivoSummary) => {
-      const isCash = a.aggKey === CASH_AGG_KEY || a.clase_activo === 'cash';
-      return isCash ? sumCashUsdForBuckets(a.titulares, cashColumnKeys) : a.total_usd;
-    };
     return [...filtered].sort((a, b) => {
-      const aIsCash = a.aggKey === CASH_AGG_KEY || a.clase_activo === 'cash';
-      const bIsCash = b.aggKey === CASH_AGG_KEY || b.clase_activo === 'cash';
-      if (aIsCash !== bIsCash) return aIsCash ? -1 : 1;
-
       let cmp = 0;
       switch (sortField) {
         case 'total_usd':
-          cmp = valorUsd(a) - valorUsd(b);
+          cmp = a.total_usd - b.total_usd;
           break;
         case 'ticker':
           cmp = a.ticker.localeCompare(b.ticker);
@@ -333,28 +255,30 @@ export default function ActivosPage() {
       }
       return sortDir === 'desc' ? -cmp : cmp;
     });
-  }, [filtered, sortField, sortDir, bondYtmByAggKey, cashColumnKeys]);
+  }, [filtered, sortField, sortDir, bondYtmByAggKey]);
 
   const toggleSort = (field: typeof sortField) => {
-    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortField(field); setSortDir('desc'); }
+    if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortField(field);
+      setSortDir('desc');
+    }
   };
 
   const totalAum = useMemo(() => filtered.reduce((s, a) => s + a.total_usd, 0), [filtered]);
   const allBrokers = useMemo(
-    () => [...new Set(state.allPositions.map((p) => p.broker))].sort(),
-    [state.allPositions]
+    () => [...new Set(positionsForActivos.map((p) => p.broker))].sort(),
+    [positionsForActivos]
   );
   const advisorFilterOptions = useMemo(() => {
     const names = new Set<string>();
-    for (const p of state.allPositions) {
+    for (const p of positionsForActivos) {
       const a = state.advisorsByCliente[p.cliente_id]?.trim();
       if (a) names.add(a);
     }
     return [...names].sort();
-  }, [state.allPositions, state.advisorsByCliente]);
+  }, [positionsForActivos, state.advisorsByCliente]);
 
-  // Aggregates for summary cards (respeta filtros activos)
   const byClase = useMemo(
     () =>
       filtered.reduce<Record<string, number>>((acc, a) => {
@@ -364,13 +288,19 @@ export default function ActivosPage() {
     [filtered]
   );
 
-  const tableColSpan = 10 + visibleCashBuckets.length;
+  const tableColSpan = 10;
 
   if (!state.hasParsed) {
     return (
       <div>
         <h2 className="page-title">Activos</h2>
-        <p className="text-muted-foreground mt-4">Subí archivos en <Link href="/upload" className="text-primary underline">Upload</Link> primero.</p>
+        <p className="mt-4 text-muted-foreground">
+          Subí archivos en{' '}
+          <Link href="/upload" className="text-primary underline">
+            Upload
+          </Link>{' '}
+          primero.
+        </p>
       </div>
     );
   }
@@ -379,42 +309,72 @@ export default function ActivosPage() {
     <div className="page-shell">
       <div>
         <h2 className="page-title">Activos ({filtered.length} instrumentos)</h2>
-        <p className="page-subtitle">Exposición agregada por instrumento cross-broker · cash consolidado por segmento</p>
+        <p className="page-subtitle">
+          Exposición agregada por instrumento cross-broker · el efectivo está en{' '}
+          <Link href="/cash" className="text-primary underline-offset-2 hover:underline">
+            Cash
+          </Link>
+        </p>
       </div>
 
-      {/* Summary by class */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 gap-3 md:grid-cols-6">
         {Object.entries(byClase)
           .sort(([, a], [, b]) => b - a)
           .map(([clase, value]) => (
-            <Card key={clase} className={`cursor-pointer transition-colors ${filterClase === clase ? 'ring-2 ring-primary' : ''}`}
-              onClick={() => setFilterClase(filterClase === clase ? 'all' : clase)}>
+            <Card
+              key={clase}
+              className={`cursor-pointer transition-colors ${filterClase === clase ? 'ring-2 ring-primary' : ''}`}
+              onClick={() => setFilterClase(filterClase === clase ? 'all' : clase)}
+            >
               <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground font-medium uppercase">{clase}</p>
-                <p className="text-lg font-semibold mt-0.5">{formatCompact(value)}</p>
+                <p className="text-xs font-medium uppercase text-muted-foreground">{clase}</p>
+                <p className="mt-0.5 text-lg font-semibold">{formatCompact(value)}</p>
               </CardContent>
             </Card>
           ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-4 items-center flex-wrap">
+      <div className="flex flex-wrap items-center gap-4">
         <input
           type="text"
           placeholder="Buscar ticker, descripción..."
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-72 rounded-md border bg-background px-3 text-sm"
         />
-        <select value={filterClase} onChange={e => setFilterClase(e.target.value)} className="h-9 rounded-md border bg-background px-3 text-sm">
-          {CLASE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select
+          value={filterClase}
+          onChange={(e) => setFilterClase(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          {CLASE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
-        <select value={filterForma} onChange={e => setFilterForma(e.target.value)} className="h-9 rounded-md border bg-background px-3 text-sm">
-          {FORMA_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select
+          value={filterForma}
+          onChange={(e) => setFilterForma(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          {FORMA_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
-        <select value={filterBroker} onChange={e => setFilterBroker(e.target.value)} className="h-9 rounded-md border bg-background px-3 text-sm">
+        <select
+          value={filterBroker}
+          onChange={(e) => setFilterBroker(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
           <option value="all">Todos los brokers</option>
-          {allBrokers.map(b => <option key={b} value={b}>{b}</option>)}
+          {allBrokers.map((b) => (
+            <option key={b} value={b}>
+              {b}
+            </option>
+          ))}
         </select>
         <select
           value={filterAdvisor}
@@ -428,7 +388,11 @@ export default function ActivosPage() {
             </option>
           ))}
         </select>
-        {(filterClase !== 'all' || filterForma !== 'all' || filterBroker !== 'all' || filterAdvisor !== 'all' || search) && (
+        {(filterClase !== 'all' ||
+          filterForma !== 'all' ||
+          filterBroker !== 'all' ||
+          filterAdvisor !== 'all' ||
+          search) && (
           <button
             onClick={() => {
               setSearch('');
@@ -444,79 +408,42 @@ export default function ActivosPage() {
         )}
       </div>
 
-      {/* Columnas visibles para CASH */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-h3">Columnas cash (segmentos)</CardTitle>
-          <p className="text-label mt-1">
-            Elegí qué rubros mostrar en la fila CASH consolidada y al expandir tenedores. ARS / MM ARS en moneda local; Valor USD queda en dólares.
-          </p>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          {CASH_BUCKET_DEFS.map(({ key, label }) => {
-            const on = cashColumnKeys.has(key);
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => toggleCashColumn(key)}
-                className={cn(
-                  'rounded-pill border-[0.5px] px-3 py-1.5 text-xs font-medium transition-colors duration-[120ms]',
-                  on
-                    ? 'border-navy-700 bg-navy-700 text-white shadow-none'
-                    : 'border-border bg-card text-muted-foreground hover:border-navy-300 hover:text-foreground'
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={selectAllCashColumns}
-            className="ml-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
-          >
-            Mostrar todas
-          </button>
-        </CardContent>
-      </Card>
-
-      {/* Activos table */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-auto max-h-[700px]">
+          <div className="max-h-[700px] overflow-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card border-b">
+              <thead className="sticky top-0 border-b bg-card">
                 <tr>
-                  <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground" onClick={() => toggleSort('ticker')}>
+                  <th
+                    className="cursor-pointer p-3 text-left text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleSort('ticker')}
+                  >
                     Ticker {sortField === 'ticker' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Descripción</th>
-                  <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Clase</th>
-                  <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Forma Legal</th>
+                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Descripción</th>
+                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Clase</th>
+                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Forma Legal</th>
                   <th
-                    className="text-right p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground whitespace-nowrap"
+                    className="cursor-pointer whitespace-nowrap p-3 text-right text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
                     onClick={() => toggleSort('tir')}
                   >
                     TIR {sortField === 'tir' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Brokers</th>
-                  <th className="text-center p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground" onClick={() => toggleSort('titulares')}>
+                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Brokers</th>
+                  <th
+                    className="cursor-pointer p-3 text-center text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleSort('titulares')}
+                  >
                     Titulares {sortField === 'titulares' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase">Cant. Total</th>
-                  {visibleCashBuckets.map(({ key, label }) => (
-                    <th
-                      key={key}
-                      className="text-right p-3 text-xs font-medium text-muted-foreground uppercase whitespace-nowrap"
-                    >
-                      {label}
-                    </th>
-                  ))}
-                  <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground" onClick={() => toggleSort('total_usd')}>
+                  <th className="p-3 text-right text-xs font-medium uppercase text-muted-foreground">Cant. Total</th>
+                  <th
+                    className="cursor-pointer p-3 text-right text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleSort('total_usd')}
+                  >
                     Valor USD {sortField === 'total_usd' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase">% Book</th>
+                  <th className="p-3 text-right text-xs font-medium uppercase text-muted-foreground">% Book</th>
                 </tr>
               </thead>
               <tbody>
@@ -530,8 +457,6 @@ export default function ActivosPage() {
                       totalAum={totalAum}
                       isExpanded={isExpanded}
                       onToggle={() => setExpandedAggKey(isExpanded ? null : activo.aggKey)}
-                      visibleCashBuckets={visibleCashBuckets}
-                      cashColumnKeys={cashColumnKeys}
                       tirCell={tirCell}
                       tableColSpan={tableColSpan}
                     />
@@ -546,212 +471,98 @@ export default function ActivosPage() {
   );
 }
 
-function ActivoRow({ activo, totalAum, isExpanded, onToggle, visibleCashBuckets, cashColumnKeys, tirCell, tableColSpan }: {
+function ActivoRow({
+  activo,
+  totalAum,
+  isExpanded,
+  onToggle,
+  tirCell,
+  tableColSpan,
+}: {
   activo: ActivoSummary;
   totalAum: number;
   isExpanded: boolean;
   onToggle: () => void;
-  visibleCashBuckets: { key: CashBucketKey; label: string }[];
-  cashColumnKeys: ReadonlySet<CashBucketKey>;
   tirCell: string;
   tableColSpan: number;
 }) {
-  const isCash = activo.aggKey === CASH_AGG_KEY || activo.clase_activo === 'cash';
-  const displayUsd = isCash
-    ? sumCashUsdForBuckets(activo.titulares, cashColumnKeys)
-    : activo.total_usd;
-  const displayPct = totalAum > 0 ? (displayUsd / totalAum) * 100 : 0;
-  const uniqueTitulares = new Set(activo.titulares.map(t => t.cliente_id)).size;
-  const cashByBucket = useMemo(
-    () => (isCash ? sumCashByBucket(activo.titulares, cashColumnKeys) : {}),
-    [isCash, activo.titulares, cashColumnKeys]
-  );
-
-  const cashRowsByClient = useMemo(() => {
-    if (!isCash) return [];
-    const byClient = new Map<
-      string,
-      {
-        cliente_id: string;
-        titular: string;
-        brokers: Set<string>;
-        cuentas: Set<string>;
-        cantidad: number;
-        total_usd: number;
-        byBucket: Partial<Record<CashBucketKey, number>>;
-      }
-    >();
-
-    for (const t of activo.titulares) {
-      const key = t.cliente_id;
-      let row = byClient.get(key);
-      if (!row) {
-        row = {
-          cliente_id: t.cliente_id,
-          titular: t.titular,
-          brokers: new Set<string>(),
-          cuentas: new Set<string>(),
-          cantidad: 0,
-          total_usd: 0,
-          byBucket: {},
-        };
-        byClient.set(key, row);
-      }
-      row.brokers.add(t.broker);
-      row.cuentas.add(t.cuenta);
-      if (t.cash_bucket != null && cashColumnKeys.has(t.cash_bucket)) {
-        row.cantidad += t.cantidad;
-        row.total_usd += t.valor_usd;
-        row.byBucket[t.cash_bucket] = (row.byBucket[t.cash_bucket] ?? 0) + getCashCellValue(t, t.cash_bucket);
-      }
-    }
-
-    return Array.from(byClient.values())
-      .filter((r) => r.total_usd > 0 || visibleCashBuckets.some(({ key }) => r.byBucket[key] != null))
-      .map((r) => ({
-        ...r,
-        brokerLabel: r.brokers.size === 1 ? [...r.brokers][0]! : 'Varios',
-        cuentaLabel: r.cuentas.size === 1 ? [...r.cuentas][0]! : `${r.cuentas.size} cuentas`,
-      }))
-      .sort((a, b) => b.total_usd - a.total_usd);
-  }, [isCash, activo.titulares, cashColumnKeys, visibleCashBuckets]);
-
-  const descTitle =
-    isCash && activo.sourceTickers.length > 0
-      ? `Incluye: ${activo.sourceTickers.join(', ')}`
-      : activo.descripcion;
+  const displayPct = totalAum > 0 ? (activo.total_usd / totalAum) * 100 : 0;
+  const uniqueTitulares = new Set(activo.titulares.map((t) => t.cliente_id)).size;
 
   return (
     <>
-      <tr className="border-b border-border/50 hover:bg-muted/50 cursor-pointer" onClick={onToggle}>
+      <tr className="cursor-pointer border-b border-border/50 hover:bg-muted/50" onClick={onToggle}>
         <td className="p-3 font-mono font-medium">{activo.ticker}</td>
-        <td className="p-3 text-muted-foreground max-w-[250px] truncate" title={descTitle}>
+        <td className="max-w-[250px] truncate p-3 text-muted-foreground" title={activo.descripcion}>
           {activo.descripcion}
-          {isCash && activo.sourceTickers.length > 1 && (
-            <span className="ml-1 text-[10px] text-muted-foreground/80">
-              ({activo.sourceTickers.length} tickers)
-            </span>
-          )}
         </td>
-        <td className="p-3"><Badge variant="secondary" className="text-xs">{activo.clase_activo}</Badge></td>
+        <td className="p-3">
+          <Badge variant="secondary" className="text-xs">
+            {activo.clase_activo}
+          </Badge>
+        </td>
         <td className="p-3 text-xs text-muted-foreground">{activo.forma_legal ?? '—'}</td>
         <td className="p-3 text-right font-mono tabular-nums text-muted-foreground">{tirCell}</td>
         <td className="p-3">
-          <div className="flex gap-1">{activo.brokers.map(b => <Badge key={b} variant="outline" className="text-xs">{b}</Badge>)}</div>
+          <div className="flex gap-1">
+            {activo.brokers.map((b) => (
+              <Badge key={b} variant="outline" className="text-xs">
+                {b}
+              </Badge>
+            ))}
+          </div>
         </td>
         <td className="p-3 text-center">{uniqueTitulares}</td>
-        <td className="p-3 text-right font-mono">{isCash ? '—' : activo.total_cantidad.toLocaleString()}</td>
-        {visibleCashBuckets.map(({ key }) => (
-          <td key={key} className="p-3 text-right font-mono whitespace-nowrap">
-            {isCash && cashByBucket[key] != null
-              ? formatCashBucketAmount(key, cashByBucket[key] ?? 0)
-              : '—'}
-          </td>
-        ))}
-        <td className="p-3 text-right font-mono font-medium">{formatCurrency(displayUsd)}</td>
+        <td className="p-3 text-right font-mono">{activo.total_cantidad.toLocaleString()}</td>
+        <td className="p-3 text-right font-mono font-medium">{formatCurrency(activo.total_usd)}</td>
         <td className="p-3 text-right text-muted-foreground">{displayPct.toFixed(1)}%</td>
       </tr>
       {isExpanded && (
         <tr className="bg-muted/30">
-          <td colSpan={tableColSpan} className="p-0">
-            <div className="p-4">
-              <p className="text-xs font-medium text-muted-foreground mb-2 uppercase">
-                Tenedores de {activo.ticker}
-                {isCash && activo.sourceTickers.length > 0 && (
-                  <span className="ml-2 font-normal normal-case">
-                    · fuentes: {activo.sourceTickers.join(', ')}
-                  </span>
-                )}
-              </p>
-              <div className="max-h-[380px] overflow-auto rounded-md border border-border/50">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80">
-                    <tr className="border-b">
-                      <th className="text-left p-1.5 font-medium text-muted-foreground">Titular</th>
-                      <th className="text-left p-1.5 font-medium text-muted-foreground">Broker</th>
-                      <th className="text-left p-1.5 font-medium text-muted-foreground">Cuenta</th>
-                      {!isCash && <th className="text-right p-1.5 font-medium text-muted-foreground">Cantidad</th>}
-                      {isCash &&
-                        visibleCashBuckets.map(({ key, label }) => (
-                          <th key={key} className="text-right p-1.5 font-medium text-muted-foreground whitespace-nowrap">
-                            {label}
-                          </th>
-                        ))}
-                      <th className="text-right p-1.5 font-medium text-muted-foreground">Valor USD</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isCash
-                      ? cashRowsByClient.map((r, i) => (
-                          <tr key={`${r.cliente_id}-${i}`} className="border-b border-border/30">
-                            <td className="p-1.5">
-                              <Link href={`/clientes/${r.cliente_id}`} className="text-primary hover:underline">{r.titular}</Link>
-                            </td>
-                            <td className="p-1.5 text-muted-foreground">{r.brokerLabel}</td>
-                            <td className="p-1.5 font-mono text-muted-foreground">{r.cuentaLabel}</td>
-                            {visibleCashBuckets.map(({ key }) => (
-                              <td key={key} className="p-1.5 text-right font-mono">
-                                {r.byBucket[key] != null ? formatCashBucketAmount(key, r.byBucket[key] ?? 0) : '—'}
-                              </td>
-                            ))}
-                            <td className="p-1.5 text-right font-mono">{formatCurrency(r.total_usd)}</td>
-                          </tr>
-                        ))
-                      : activo.titulares
-                          .sort((a, b) => b.valor_usd - a.valor_usd)
-                          .map((t, i) => (
-                            <tr key={i} className="border-b border-border/30">
-                              <td className="p-1.5">
-                                <Link href={`/clientes/${t.cliente_id}`} className="text-primary hover:underline">{t.titular}</Link>
-                              </td>
-                              <td className="p-1.5 text-muted-foreground">{t.broker}</td>
-                              <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
-                              <td className="p-1.5 text-right font-mono tabular-nums">
-                                {t.cantidad.toLocaleString(undefined, { maximumFractionDigits: 6 })}
-                              </td>
-                              <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
-                            </tr>
-                          ))}
-                    {isCash && (
-                      <tr className="border-t-2 border-border font-medium bg-muted/20">
-                        <td className="p-1.5">Subtotal</td>
-                        <td className="p-1.5" />
-                        <td className="p-1.5" />
-                        {visibleCashBuckets.map(({ key }) => (
-                          <td key={key} className="p-1.5 text-right font-mono">
-                            {formatCashBucketAmount(key, cashByBucket[key] ?? 0)}
-                          </td>
-                        ))}
-                        <td className="p-1.5 text-right font-mono">{formatCurrency(displayUsd)}</td>
+          <td colSpan={tableColSpan} className="p-4">
+            <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+              Tenedores de {activo.ticker}
+            </p>
+            <div className="max-h-[380px] overflow-auto rounded-md border border-border/50">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 z-10 bg-muted">
+                  <tr className="border-b">
+                    <th className="p-1.5 text-left font-medium text-muted-foreground">Titular</th>
+                    <th className="p-1.5 text-left font-medium text-muted-foreground">Broker</th>
+                    <th className="p-1.5 text-left font-medium text-muted-foreground">Cuenta</th>
+                    <th className="p-1.5 text-right font-medium text-muted-foreground">Cantidad</th>
+                    <th className="p-1.5 text-right font-medium text-muted-foreground">Valor USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activo.titulares
+                    .slice()
+                    .sort((a, b) => b.valor_usd - a.valor_usd)
+                    .map((t, i) => (
+                      <tr key={i} className="border-b border-border/30">
+                        <td className="p-1.5">
+                          <Link
+                            href={`/clientes/${t.cliente_id}`}
+                            className="text-primary hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {t.titular}
+                          </Link>
+                        </td>
+                        <td className="p-1.5 text-muted-foreground">{t.broker}</td>
+                        <td className="p-1.5 font-mono text-muted-foreground">{t.cuenta}</td>
+                        <td className="p-1.5 text-right font-mono tabular-nums">
+                          {t.cantidad.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                        </td>
+                        <td className="p-1.5 text-right font-mono">{formatCurrency(t.valor_usd)}</td>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    ))}
+                </tbody>
+              </table>
             </div>
           </td>
         </tr>
       )}
     </>
   );
-}
-
-function getCashCellValue(
-  t: { valor_usd: number; valor_local: number; moneda: string },
-  bucket: CashBucketKey
-): number {
-  // Columnas ARS / MM ARS: monto en moneda local. VALOR USD ya expresa el dólar.
-  if (bucket === 'ars' || bucket === 'money_market_ars') {
-    return t.moneda === 'ARS' ? t.valor_local : t.valor_usd;
-  }
-  if (bucket === 'eur') {
-    return t.moneda === 'EUR' ? t.valor_local : t.valor_usd;
-  }
-  return t.valor_usd;
-}
-
-function formatCashBucketAmount(bucket: CashBucketKey, value: number): string {
-  if (bucket === 'ars' || bucket === 'money_market_ars') return formatCurrency(value, 'ARS');
-  if (bucket === 'eur') return formatCurrency(value, 'EUR');
-  return formatCurrency(value);
 }
