@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { utils as xlsxUtils } from 'xlsx';
-import { iebParser } from '@/lib/parsers/ieb';
+import { iebParser, dedupIebCashPositions } from '@/lib/parsers/ieb';
 
 function makeWorkbook(rows: unknown[][]) {
   const wb = xlsxUtils.book_new();
@@ -124,6 +124,110 @@ describe('iebParser.parse - cash normalization', () => {
     // Prioriza columna F (Ticker) por sobre descripción.
     const tickerPriorityRow = res.positions.find((p) => p.source_row === 7);
     expect(tickerPriorityRow?.moneda_subtipo).toBe('USD');
+  });
+});
+
+describe('iebParser.detect - disponibles', () => {
+  it('detects disponibles format by header', () => {
+    const wb = makeWorkbook([
+      [
+        'id',
+        'Comitente',
+        'Nombre',
+        'Productor',
+        'Moneda',
+        'fechaconsulta',
+        'Vencido',
+        '24horas',
+        '48horas',
+        '+48horas',
+        'Saldo Total',
+        'Garantia',
+        'numeroProductor',
+      ],
+      [1, '44148', 'Cliente Test', 'Milagros Behr', 'PESOS', '2026-07-31', 100, 0, 0, 0, 100, 0, 251],
+    ]);
+    const det = iebParser.detect(wb, 'ieb-disponibles.xlsx');
+    expect(det.matches).toBe(true);
+    expect(det.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+});
+
+describe('iebParser.parse - disponibles', () => {
+  const disponiblesHeader = [
+    'id',
+    'Comitente',
+    'Nombre',
+    'Productor',
+    'Moneda',
+    'fechaconsulta',
+    'Vencido',
+    '24horas',
+    '48horas',
+    '+48horas',
+    'Saldo Total',
+    'Garantia',
+    'numeroProductor',
+  ];
+
+  it('parses disponibles rows into cash positions by moneda', () => {
+    const wb = makeWorkbook([
+      disponiblesHeader,
+      [3812219115, '44148', 'Martinez Santiago Pablo', 'Milagros Behr', 'DOLAR EXT.', '2026-07-31', 53.48, 0, 0, 0, 53.48, 0, 251],
+      [3812219116, '44148', 'Martinez Santiago Pablo', 'Milagros Behr', 'PESOS', '2026-07-31', 199108.32, 0, 0, 0, 199108.32, 0, 251],
+      [3812236936, '261507', 'ADAPTO FUNGTASTIC S. R. L.', 'Milagros Behr', 'PESOS', '2026-07-31', -3240.12, 0, 0, 0, -3240.12, 0, 251],
+    ]);
+
+    const res = iebParser.parse(wb, 'ieb-disponibles.xlsx', { fx_manual: 1300 });
+    expect(res.errors.filter((e) => e.severity === 'error')).toHaveLength(0);
+    expect(res.positions).toHaveLength(3);
+    expect(res.metadata.fecha_reporte).toBe('2026-07-31');
+
+    const cable = res.positions.find((p) => p.moneda_subtipo === 'CABLE');
+    expect(cable?.valor_mercado_local).toBeCloseTo(53.48, 4);
+    expect(cable?.valor_mercado_usd).toBeCloseTo(53.48, 4);
+
+    const pesos = res.positions.find((p) => p.cuenta === '44148' && p.moneda_subtipo === 'ARS');
+    expect(pesos?.valor_mercado_local).toBeCloseTo(199108.32, 2);
+    expect(pesos?.valor_mercado_usd).toBeCloseTo(199108.32 / 1300, 2);
+
+    const neg = res.positions.find((p) => p.cuenta === '261507');
+    expect(neg?.warnings).toContain('CASH_NEGATIVO');
+  });
+
+  it('dedup removes titulos cash when disponibles exists for same cuenta/moneda', () => {
+    const titulosWb = makeWorkbook([
+      [
+        'id',
+        'Comitente',
+        'Nombre',
+        'Productor',
+        'SubtotalCodigoEspecie',
+        'Ticker',
+        'SubtotalEspecie',
+        'SubtotalParticipacion',
+        'SubtotalCantidad',
+        'SubtotalPrecio',
+        'SubtotalImporte',
+        'SubtotalCosto',
+        'SubtotalVariacion',
+        'SubtotalResultado',
+        'TipoCambio',
+        'SubtotalTipoEspecie',
+      ],
+      [1, '44148', 'Martinez Santiago Pablo', 'Milagros Behr', 'PESOS', 'Pesos', 'PESOS', 1, 1, 1, 999, 0, 0, 0, 1300, 4],
+    ]);
+    const dispWb = makeWorkbook([
+      disponiblesHeader,
+      [2, '44148', 'Martinez Santiago Pablo', 'Milagros Behr', 'PESOS', '2026-07-31', 0, 0, 0, 0, 199108.32, 0, 251],
+    ]);
+
+    const titulos = iebParser.parse(titulosWb, 'ieb-titulos.xlsx', { fecha_reporte_override: '2026-07-31' });
+    const disp = iebParser.parse(dispWb, 'ieb-disponibles.xlsx', { fx_manual: 1300 });
+    const merged = dedupIebCashPositions([...titulos.positions, ...disp.positions]);
+
+    expect(merged.filter((p) => p.clase_activo === 'cash')).toHaveLength(1);
+    expect(merged.find((p) => p.clase_activo === 'cash')?.valor_mercado_local).toBeCloseTo(199108.32, 2);
   });
 });
 

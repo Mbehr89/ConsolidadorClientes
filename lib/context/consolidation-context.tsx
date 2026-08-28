@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { read as xlsxRead, utils as xlsxUtils, type WorkBook } from 'xlsx';
 import { detectBroker, parseWithBroker } from '@/lib/parsers';
+import { dedupIebCashPositions } from '@/lib/parsers/ieb';
 import type { BrokerCode, Position, ParseResult } from '@/lib/schema';
 import type { ParseOptions } from '@/lib/parsers/types';
 import type {
@@ -367,9 +368,11 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const raw = files
-      .filter((f) => f.result)
-      .flatMap((f) => f.result!.positions);
+    const raw = dedupIebCashPositions(
+      files
+        .filter((f) => f.result)
+        .flatMap((f) => f.result!.positions)
+    );
     const allPositions = applyGrupoIdsToPositions(raw, gruposStore);
 
     const advisorsByCliente = mergeAdvisorsForClientes(allPositions, mappingStore, clienteAdvisorsStore);

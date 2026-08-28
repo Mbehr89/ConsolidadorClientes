@@ -10,6 +10,11 @@
  * SubtotalTipoEspecie: 0=equity, 1=bono, 3=ON, 4=cash, 5=FCI, 6=letra
  * Filas con Ticker="-" y SubtotalParticipacion=100 son totalizadoras → checksum.
  * Productor: columna "Productor" (nombre del asesor IEB).
+ *
+ * Formato disponibles (cash por moneda, histórico IEB):
+ *   id, Comitente, Nombre, Productor, Moneda, fechaconsulta,
+ *   Vencido, 24horas, 48horas, +48horas, Saldo Total, Garantia, numeroProductor
+ *   Archivos suelen llamarse *disponibles*.xlsx
  */
 import type { WorkBook } from 'xlsx';
 import { utils as xlsxUtils } from 'xlsx';
@@ -47,6 +52,58 @@ const IEB_CASH_TICKER_MAP: Record<string, string | null> = {
 };
 const CASH_TICKERS = new Set([...Object.keys(IEB_CASH_TICKER_MAP), '-']);
 
+/** Columna Moneda en archivos disponibles → moneda_subtipo. */
+const IEB_DISPONIBLES_MONEDA_MAP: Record<string, string> = {
+  PESOS: 'ARS',
+  ARS: 'ARS',
+  USD: 'USD',
+  'DOLAR EXT': 'CABLE',
+  DOLARUSA: '7000',
+  'MM PESOS': 'money_market_ars',
+  'MM DOLARES': 'money_market_usd',
+  'MM DOLAR': 'money_market_usd',
+  'MM USD': 'money_market_usd',
+};
+
+export const IEB_DISPONIBLES_WARNING = 'IEB_DISPONIBLES';
+
+/** Si hay disponibles, reemplaza filas cash duplicadas del detalle de títulos. */
+export function dedupIebCashPositions(positions: Position[]): Position[] {
+  const disponiblesKeys = new Set(
+    positions
+      .filter((p) => p.broker === BROKER_CODE && p.warnings.includes(IEB_DISPONIBLES_WARNING))
+      .map((p) => `${p.cuenta}|${p.moneda_subtipo ?? ''}`)
+  );
+  if (disponiblesKeys.size === 0) return positions;
+
+  return positions.filter((p) => {
+    if (p.broker !== BROKER_CODE || p.clase_activo !== 'cash') return true;
+    if (p.warnings.includes(IEB_DISPONIBLES_WARNING)) return true;
+    return !disponiblesKeys.has(`${p.cuenta}|${p.moneda_subtipo ?? ''}`);
+  });
+}
+
+function normalizeHeaderToken(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s_\-./+]/g, '')
+    .toLowerCase();
+}
+
+function headerIncludes(headerStr: string[], ...tokens: string[]): boolean {
+  const normalized = headerStr.map(normalizeHeaderToken);
+  return tokens.every((t) => normalized.includes(normalizeHeaderToken(t)));
+}
+
+function isIebDisponiblesFormat(headerRow: unknown[]): boolean {
+  const headerStr = headerRow.map((h) => String(h ?? '').trim());
+  return (
+    headerIncludes(headerStr, 'Comitente', 'Productor', 'Moneda', 'Saldo Total') &&
+    !headerIncludes(headerStr, 'SubtotalTipoEspecie', 'Ticker')
+  );
+}
+
 /** TipoCambio especiales que NO son tasa FX real */
 const TC_NON_FX = new Set([1, 2]);
 
@@ -69,6 +126,15 @@ function detect(workbook: WorkBook, filename: string): DetectResult {
   }
 
   const headerStr = header.map((h) => String(h ?? ''));
+
+  // IEB disponibles (cash por moneda / plazos)
+  if (isIebDisponiblesFormat(header)) {
+    return {
+      matches: true,
+      confidence: 0.93,
+      reason: 'Header contains Comitente + Productor + Moneda + Saldo Total (IEB disponibles)',
+    };
+  }
 
   // IEB signature (detalle): has "Comitente", "Productor", "SubtotalTipoEspecie", "TipoCambio"
   const hasComitente = headerStr.includes('Comitente');
@@ -111,6 +177,14 @@ function detect(workbook: WorkBook, filename: string): DetectResult {
     };
   }
 
+  if (/disponibles/i.test(filename)) {
+    return {
+      matches: true,
+      confidence: 0.45,
+      reason: 'Filename contains "disponibles"',
+    };
+  }
+
   return { matches: false, confidence: 0, reason: 'No IEB markers found' };
 }
 
@@ -127,7 +201,27 @@ function parse(
   const cuentasSet = new Set<string>();
   const checksumByComitente = new Map<string, number>();
 
-  // ─── Validate fecha ───
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    errors.push({ row: null, field: null, message: 'Workbook vacío', severity: 'error' });
+    return makeResult(positions, errors, warnings, cuentasSet, '', filename, null);
+  }
+
+  const sheet = workbook.Sheets[sheetName]!;
+  const rows: unknown[][] = xlsxUtils.sheet_to_json(sheet, { header: 1 });
+
+  if (rows.length < 2) {
+    errors.push({ row: null, field: null, message: 'Archivo sin datos', severity: 'error' });
+    return makeResult(positions, errors, warnings, cuentasSet, '', filename, null);
+  }
+
+  const headerRow = rows[0]!;
+
+  if (isIebDisponiblesFormat(headerRow)) {
+    return parseIebDisponibles(rows, filename, opts);
+  }
+
+  // ─── Validate fecha (títulos / resumen) ───
   const fechaReporte = opts.fecha_reporte_override ?? '';
   if (!fechaReporte) {
     errors.push({
@@ -138,22 +232,6 @@ function parse(
     });
   }
 
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) {
-    errors.push({ row: null, field: null, message: 'Workbook vacío', severity: 'error' });
-    return makeResult(positions, errors, warnings, cuentasSet, fechaReporte, filename, null);
-  }
-
-  const sheet = workbook.Sheets[sheetName]!;
-  const rows: unknown[][] = xlsxUtils.sheet_to_json(sheet, { header: 1 });
-
-  if (rows.length < 2) {
-    errors.push({ row: null, field: null, message: 'Archivo sin datos', severity: 'error' });
-    return makeResult(positions, errors, warnings, cuentasSet, fechaReporte, filename, null);
-  }
-
-  // ─── Map columns ───
-  const headerRow = rows[0]!;
   const isResumenByComitente = headerRow.some((h) => String(h ?? '').trim() === 'TotalPosicion');
   if (isResumenByComitente) {
     return parseIebResumenByComitente(rows, filename, opts);
@@ -641,6 +719,238 @@ function mapColumnsResumen(headerRow: unknown[]): IebResumenColumnIndex {
     totalPosicion: find('TotalPosicion', ['Total', 'ValorTotal']),
     fechaConsulta: findOptional('FechaConsulta', ['Fecha']),
   };
+}
+
+function mapDisponiblesMoneda(raw: string): { monedaSubtipo: string | null; moneda: string; warning?: string } {
+  const norm = normalizeIebCashToken(raw);
+  const subtipo = IEB_DISPONIBLES_MONEDA_MAP[norm];
+  if (!subtipo) {
+    return {
+      monedaSubtipo: null,
+      moneda: 'ARS',
+      warning: `Moneda IEB desconocida: ${raw}`,
+    };
+  }
+  return { monedaSubtipo: subtipo, moneda: subtipo === 'ARS' ? 'ARS' : 'USD' };
+}
+
+function parseDisponiblesFecha(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const utcDays = raw - 25569;
+    return new Date(utcDays * 86400000).toISOString().slice(0, 10);
+  }
+  const text = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const d = new Date(text);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return text;
+}
+
+function computeDisponiblesValuation(
+  moneda: string,
+  saldoTotal: number,
+  fxManual?: number
+): Pick<Position, 'valor_mercado_local' | 'valor_mercado_usd' | 'fx_source'> {
+  if (moneda === 'ARS') {
+    return {
+      valor_mercado_local: saldoTotal,
+      valor_mercado_usd: fxManual && fxManual > 0 ? saldoTotal / fxManual : null,
+      fx_source: fxManual && fxManual > 0 ? 'manual' : 'default',
+    };
+  }
+  return {
+    valor_mercado_local: saldoTotal,
+    valor_mercado_usd: saldoTotal,
+    fx_source: 'default',
+  };
+}
+
+interface IebDisponiblesColumnIndex {
+  comitente: number;
+  nombre: number;
+  productor: number | null;
+  moneda: number;
+  fechaconsulta: number | null;
+  vencido: number | null;
+  h24: number | null;
+  h48: number | null;
+  h48plus: number | null;
+  saldoTotal: number;
+  garantia: number | null;
+  numeroProductor: number | null;
+}
+
+function mapColumnsDisponibles(headerRow: unknown[]): IebDisponiblesColumnIndex {
+  const headers = headerRow.map((h) => String(h ?? '').trim());
+
+  const norm = (value: string): string =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[\s_\-./]/g, '')
+      .toLowerCase();
+
+  const normalizedIndex = new Map<string, number>();
+  headers.forEach((h, idx) => {
+    const key = norm(h);
+    if (!normalizedIndex.has(key)) normalizedIndex.set(key, idx);
+  });
+
+  const find = (label: string, aliases: string[] = []): number => {
+    for (const key of [label, ...aliases].map(norm)) {
+      const idx = normalizedIndex.get(key);
+      if (idx != null) return idx;
+    }
+    throw new Error(`Column "${label}" not found in IEB disponibles header`);
+  };
+
+  const findOptional = (label: string, aliases: string[] = []): number | null => {
+    for (const key of [label, ...aliases].map(norm)) {
+      const idx = normalizedIndex.get(key);
+      if (idx != null) return idx;
+    }
+    return null;
+  };
+
+  return {
+    comitente: find('Comitente'),
+    nombre: find('Nombre'),
+    productor: findOptional('Productor', ['Manager', 'Asesor', 'Advisor']),
+    moneda: find('Moneda'),
+    fechaconsulta: findOptional('fechaconsulta', ['FechaConsulta', 'Fecha']),
+    vencido: findOptional('Vencido'),
+    h24: findOptional('24horas', ['24 horas']),
+    h48: findOptional('48horas', ['48 horas']),
+    h48plus: findOptional('+48horas', ['48horasmas', 'mas48horas']),
+    saldoTotal: find('Saldo Total', ['SaldoTotal', 'Total']),
+    garantia: findOptional('Garantia', ['Garantía']),
+    numeroProductor: findOptional('numeroProductor', ['NumeroProductor']),
+  };
+}
+
+function parseIebDisponibles(
+  rows: unknown[][],
+  filename: string,
+  opts: ParseOptions
+): ParseResult {
+  const positions: Position[] = [];
+  const errors: ParseError[] = [];
+  const warnings: string[] = [
+    'IEB disponibles: cash por moneda desde archivo de disponibles (reemplaza cash duplicado en títulos).',
+  ];
+  const cuentasSet = new Set<string>();
+  const headerRow = rows[0] ?? [];
+  const colIdx = mapColumnsDisponibles(headerRow);
+  const productoresDetectados = new Set<string>();
+  let fechaMetadata = opts.fecha_reporte_override ?? '';
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const comitente = String(row[colIdx.comitente] ?? '').trim();
+    const nombre = String(row[colIdx.nombre] ?? '').trim();
+    const monedaRaw = String(row[colIdx.moneda] ?? '').trim();
+    if (!comitente || !nombre || !monedaRaw) continue;
+
+    const productor =
+      colIdx.productor != null ? String(row[colIdx.productor] ?? '').trim() || null : null;
+    if (productor) productoresDetectados.add(productor);
+    cuentasSet.add(comitente);
+
+    const fechaRaw =
+      colIdx.fechaconsulta != null ? row[colIdx.fechaconsulta] : undefined;
+    const fechaReporte =
+      opts.fecha_reporte_override ||
+      parseDisponiblesFecha(fechaRaw) ||
+      new Date().toISOString().slice(0, 10);
+    if (!fechaMetadata) fechaMetadata = fechaReporte;
+
+    const saldoTotal = parseNumeric(row[colIdx.saldoTotal]) ?? 0;
+    const vencido = colIdx.vencido != null ? parseNumeric(row[colIdx.vencido]) : null;
+    const h24 = colIdx.h24 != null ? parseNumeric(row[colIdx.h24]) : null;
+    const h48 = colIdx.h48 != null ? parseNumeric(row[colIdx.h48]) : null;
+    const h48plus = colIdx.h48plus != null ? parseNumeric(row[colIdx.h48plus]) : null;
+    const garantia = colIdx.garantia != null ? parseNumeric(row[colIdx.garantia]) : null;
+
+    const { monedaSubtipo, moneda, warning: monedaWarning } = mapDisponiblesMoneda(monedaRaw);
+    const posWarnings: string[] = [IEB_DISPONIBLES_WARNING];
+    if (monedaWarning) posWarnings.push(monedaWarning);
+    if (saldoTotal < 0) posWarnings.push(WARNING_CODES.CASH_NEGATIVO);
+    if (moneda === 'ARS' && (!opts.fx_manual || opts.fx_manual <= 0)) {
+      posWarnings.push(`${WARNING_CODES.TIPO_CAMBIO_ATIPICO}: disponibles ARS sin fx_manual`);
+    }
+
+    const { normalizado, tipo_titular } = normalizeTitular(nombre);
+    const aliasMap: Record<string, string> = opts.aliases ?? {};
+    const clienteId = generateClienteIdSync(normalizado, aliasMap);
+    const valuation = computeDisponiblesValuation(moneda, saldoTotal, opts.fx_manual);
+
+    const descripcionParts = [
+      `Disponibles ${monedaRaw.trim()}`,
+      vencido != null ? `Venc:${vencido}` : null,
+      h24 != null ? `24h:${h24}` : null,
+      h48 != null ? `48h:${h48}` : null,
+      h48plus != null ? `+48h:${h48plus}` : null,
+      garantia != null ? `Gar:${garantia}` : null,
+    ].filter(Boolean);
+
+    positions.push({
+      cliente_id: clienteId,
+      titular: nombre,
+      titular_normalizado: normalizado,
+      tipo_titular,
+      grupo_id: null,
+      broker: BROKER_CODE,
+      cuenta: comitente,
+      tipo_cuenta: null,
+      productor,
+      fecha_reporte: fechaReporte,
+      ticker: 'CASH',
+      isin: null,
+      cusip: null,
+      descripcion: descripcionParts.join(' | '),
+      clase_activo: 'cash',
+      forma_legal: null,
+      pais_emisor: null,
+      cantidad: saldoTotal,
+      cantidad_disponible: null,
+      cantidad_no_disponible: null,
+      precio_mercado: null,
+      moneda,
+      moneda_subtipo: monedaSubtipo,
+      valor_mercado_local: valuation.valor_mercado_local,
+      valor_mercado_usd: valuation.valor_mercado_usd,
+      accrued_interest_usd: null,
+      fx_source: valuation.fx_source,
+      pct_portfolio: null,
+      source_file: filename,
+      source_row: i,
+      warnings: posWarnings,
+    });
+  }
+
+  if (positions.length === 0) {
+    errors.push({ row: null, field: null, message: 'Archivo disponibles sin filas válidas', severity: 'error' });
+  }
+
+  const productorMetadata =
+    productoresDetectados.size === 1
+      ? Array.from(productoresDetectados)[0]!
+      : productoresDetectados.size > 1
+        ? 'MULTIPLE'
+        : null;
+
+  return makeResult(
+    positions,
+    errors,
+    warnings,
+    cuentasSet,
+    fechaMetadata,
+    filename,
+    productorMetadata
+  );
 }
 
 function parseIebResumenByComitente(
