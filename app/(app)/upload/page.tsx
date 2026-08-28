@@ -84,6 +84,9 @@ export default function UploadPage() {
       const payload = (await res.json()) as {
         error?: string;
         totalInFolder?: number;
+        warnings?: string[];
+        storageBackend?: string;
+        cronConfigured?: boolean;
         files?: { id: string; name: string; modifiedTime: string | null; contentBase64: string }[];
       };
       if (!res.ok) {
@@ -92,6 +95,11 @@ export default function UploadPage() {
         return;
       }
       setDriveConnected(true);
+
+      const warningText =
+        payload.warnings && payload.warnings.length > 0
+          ? ` Atención producción: ${payload.warnings.join(' ')}`
+          : '';
 
       const allFromDrive = (payload.files ?? []).map((f) => {
         const bytes = Uint8Array.from(atob(f.contentBase64), (c) => c.charCodeAt(0));
@@ -112,20 +120,29 @@ export default function UploadPage() {
       if (files.length === 0) {
         const detected =
           typeof payload.totalInFolder === 'number' ? ` (${payload.totalInFolder} detectado/s)` : '';
-        setDriveStatus(`Drive sincronizado${detected}. No hay archivos nuevos para importar.`);
+        setDriveStatus(`Drive sincronizado${detected}. No hay archivos nuevos para importar.${warningText}`);
         return;
       }
 
       await addFiles(files.map((x) => x.file));
-      await fetch('/api/drive/sync', {
+      const ackRes = await fetch('/api/drive/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           files: files.map((x) => x.meta),
         }),
       });
+      if (!ackRes.ok) {
+        const ackPayload = (await ackRes.json().catch(() => ({}))) as { error?: string };
+        setDriveStatus(
+          `Archivos descargados (${files.length}), pero falló registrar la importación: ${
+            ackPayload.error ?? 'error de storage'
+          }.${warningText}`
+        );
+        return;
+      }
       setAutoParseAfterDrive(true);
-      setDriveStatus(`Importación automática completada: ${files.length} archivo(s) nuevos.`);
+      setDriveStatus(`Importación automática completada: ${files.length} archivo(s) nuevos.${warningText}`);
     } catch {
       setDriveConnected(false);
       setDriveStatus('Error inesperado al sincronizar desde Google Drive.');

@@ -129,6 +129,12 @@ function getRemoteBackend(): RemoteBackend {
   return 'none';
 }
 
+/** Backend activo para persistir config (aliases, drive-imported, etc.). */
+export function getConfigStorageBackend(): RemoteBackend | 'local' {
+  const backend = getRemoteBackend();
+  return backend === 'none' ? 'local' : backend;
+}
+
 async function remoteGet(key: string, backend: Exclude<RemoteBackend, 'none'>): Promise<unknown> {
   if (backend === 'vercel-kv') {
     const { kv } = await import('@vercel/kv');

@@ -2,6 +2,7 @@ import { createSign } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getDriveImported, setDriveImported } from '@/lib/config-store/accessors';
+import { getConfigStorageBackend } from '@/lib/config-store';
 import type { DriveImportedStore } from '@/lib/config-store/types';
 
 export const dynamic = 'force-dynamic';
@@ -204,6 +205,21 @@ function isCronAuthorized(req: Request): boolean {
   return auth === `Bearer ${expected}`;
 }
 
+function buildProductionWarnings(): string[] {
+  const warnings: string[] = [];
+  if (process.env.NODE_ENV === 'production' && getConfigStorageBackend() === 'local') {
+    warnings.push(
+      'Sin Redis/KV en producción: el registro de archivos importados de Drive no persiste entre requests.'
+    );
+  }
+  if (process.env.NODE_ENV === 'production' && !process.env.CRON_SECRET?.trim()) {
+    warnings.push(
+      'CRON_SECRET no configurado en Vercel: el cron diario /api/drive/sync?mode=cron responde 401.'
+    );
+  }
+  return warnings;
+}
+
 export async function GET(req: Request) {
   const cfg = ensureDriveConfigured();
   if (!cfg.ok) {
@@ -221,7 +237,15 @@ export async function GET(req: Request) {
     const force = url.searchParams.get('force') === '1';
     const cronMode = mode === 'cron';
     if (cronMode && !isCronAuthorized(req)) {
-      return NextResponse.json({ error: 'Unauthorized cron request.' }, { status: 401 });
+      const missingCron = !process.env.CRON_SECRET?.trim();
+      return NextResponse.json(
+        {
+          error: missingCron
+            ? 'CRON_SECRET no configurado. Agregá la variable en Vercel → Settings → Environment Variables (Production) y redeploy.'
+            : 'Unauthorized cron request. Verificá que CRON_SECRET en Vercel coincida con el valor enviado por el cron.',
+        },
+        { status: 401 }
+      );
     }
 
     const accessToken = await getServiceAccountAccessToken(cfg.clientEmail, cfg.privateKey);
@@ -249,6 +273,9 @@ export async function GET(req: Request) {
         totalInFolder: candidates.length,
         importedCount: Object.keys(imported).length,
         newCount: pending.length,
+        storageBackend: getConfigStorageBackend(),
+        cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
+        warnings: buildProductionWarnings(),
         pendingFiles: pending.map((f) => ({
           id: f.id,
           name: f.name,
@@ -277,6 +304,9 @@ export async function GET(req: Request) {
       totalInFolder: candidates.length,
       importedCount: Object.keys(imported).length,
       newCount: files.length,
+      storageBackend: getConfigStorageBackend(),
+      cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
+      warnings: buildProductionWarnings(),
       files,
     });
   } catch (err) {
