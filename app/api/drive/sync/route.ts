@@ -280,9 +280,10 @@ export async function GET(req: Request) {
       files,
     });
   } catch (err) {
+    const detail = err instanceof Error ? err.message : 'Error desconocido';
     console.error('[drive.sync] GET failed', err);
     return NextResponse.json(
-      { error: 'No se pudieron sincronizar archivos de Drive.' },
+      { error: `No se pudieron sincronizar archivos de Drive. ${detail}` },
       { status: 500 }
     );
   }

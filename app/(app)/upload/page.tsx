@@ -127,6 +127,7 @@ export default function UploadPage() {
       setAutoParseAfterDrive(true);
       setDriveStatus(`Importación automática completada: ${files.length} archivo(s) nuevos.`);
     } catch {
+      setDriveConnected(false);
       setDriveStatus('Error inesperado al sincronizar desde Google Drive.');
     } finally {
       setIsSyncingDrive(false);
@@ -196,8 +197,8 @@ export default function UploadPage() {
             {driveConnected == null
               ? 'Drive pendiente'
               : driveConnected
-                ? 'Drive server sync'
-                : 'Drive no configurado'}
+                ? 'Drive conectado'
+                : 'Drive con error'}
           </Badge>
         </div>
       </div>
