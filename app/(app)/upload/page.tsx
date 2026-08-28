@@ -79,19 +79,35 @@ export default function UploadPage() {
     setIsSyncingDrive(true);
     setDriveStatus(null);
     try {
-      const query = force ? '?force=1' : '';
-      const res = await fetch(`/api/drive/sync${query}`, { cache: 'no-store' });
-      const payload = (await res.json()) as {
+      type DriveSyncPayload = {
         error?: string;
+        ok?: boolean;
         totalInFolder?: number;
+        pendingCount?: number;
+        skippedCount?: number;
         warnings?: string[];
         storageBackend?: string;
         cronConfigured?: boolean;
         files?: { id: string; name: string; modifiedTime: string | null; contentBase64: string }[];
       };
+
+      const readJson = async (res: Response): Promise<DriveSyncPayload> => {
+        const text = await res.text();
+        try {
+          return JSON.parse(text) as DriveSyncPayload;
+        } catch {
+          throw new Error(
+            `HTTP ${res.status}: respuesta inválida del servidor (${text.slice(0, 160).replace(/\s+/g, ' ')})`
+          );
+        }
+      };
+
+      const query = force ? '?force=1' : '';
+      const res = await fetch(`/api/drive/sync${query}`, { cache: 'no-store' });
+      const payload = await readJson(res);
       if (!res.ok) {
         setDriveConnected(false);
-        setDriveStatus(payload.error ?? 'No se pudo sincronizar con Drive.');
+        setDriveStatus(payload.error ?? `No se pudo sincronizar con Drive (HTTP ${res.status}).`);
         return;
       }
       setDriveConnected(true);
@@ -99,6 +115,10 @@ export default function UploadPage() {
       const warningText =
         payload.warnings && payload.warnings.length > 0
           ? ` Atención producción: ${payload.warnings.join(' ')}`
+          : '';
+      const skippedText =
+        payload.skippedCount && payload.skippedCount > 0
+          ? ` Se omitieron ${payload.skippedCount} archivo(s) en este sync (límite por request). Volvé a sincronizar para continuar.`
           : '';
 
       const allFromDrive = (payload.files ?? []).map((f) => {
@@ -133,7 +153,8 @@ export default function UploadPage() {
         }),
       });
       if (!ackRes.ok) {
-        const ackPayload = (await ackRes.json().catch(() => ({}))) as { error?: string };
+        const ackPayload = await readJson(ackRes);
+        setDriveConnected(false);
         setDriveStatus(
           `Archivos descargados (${files.length}), pero falló registrar la importación: ${
             ackPayload.error ?? 'error de storage'
@@ -142,10 +163,16 @@ export default function UploadPage() {
         return;
       }
       setAutoParseAfterDrive(true);
-      setDriveStatus(`Importación automática completada: ${files.length} archivo(s) nuevos.${warningText}`);
-    } catch {
+      setDriveStatus(
+        `Importación automática completada: ${files.length} archivo(s) nuevos.${skippedText}${warningText}`
+      );
+    } catch (err) {
       setDriveConnected(false);
-      setDriveStatus('Error inesperado al sincronizar desde Google Drive.');
+      setDriveStatus(
+        err instanceof Error
+          ? err.message
+          : 'Error inesperado al sincronizar desde Google Drive.'
+      );
     } finally {
       setIsSyncingDrive(false);
       syncInFlightRef.current = false;
@@ -220,9 +247,16 @@ export default function UploadPage() {
         </div>
       </div>
       {driveStatus && (
-        <Card>
+        <Card className={driveConnected === false ? 'border-destructive/50 bg-destructive/5' : undefined}>
           <CardContent className="p-3">
-            <p className="text-sm text-muted-foreground">{driveStatus}</p>
+            <p
+              className={cn(
+                'text-sm',
+                driveConnected === false ? 'text-destructive font-medium' : 'text-muted-foreground'
+              )}
+            >
+              {driveStatus}
+            </p>
           </CardContent>
         </Card>
       )}

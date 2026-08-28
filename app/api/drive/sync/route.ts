@@ -7,6 +7,10 @@ import type { DriveImportedStore } from '@/lib/config-store/types';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+export const maxDuration = 60;
+
+/** Evita timeouts/respuestas gigantes en Vercel cuando no hay Redis y todo aparece como "nuevo". */
+const MAX_SYNC_FILES = 12;
 
 const EXCEL_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -44,13 +48,24 @@ function ensureDriveConfigured():
   if (!clientEmail) missing.push('GOOGLE_DRIVE_SERVICE_ACCOUNT_EMAIL');
   if (!privateKeyRaw) missing.push('GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY');
   if (missing.length > 0) return { ok: false as const, missing };
-  const privateKey = privateKeyRaw!.replace(/\\n/g, '\n');
+  const privateKey = normalizePrivateKey(privateKeyRaw!);
   return {
     ok: true as const,
     folderId: folderId!,
     clientEmail: clientEmail!,
     privateKey,
   };
+}
+
+function normalizePrivateKey(raw: string): string {
+  let key = raw.trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1);
+  }
+  return key.replace(/\\n/g, '\n');
 }
 
 function base64UrlEncode(input: string | Buffer): string {
@@ -264,6 +279,21 @@ export async function GET(req: Request) {
           return false;
         });
 
+    const healthMode = mode === 'health';
+    if (healthMode) {
+      return NextResponse.json({
+        ok: true,
+        mode: 'health',
+        folderId: cfg.folderId,
+        totalInFolder: candidates.length,
+        importedCount: Object.keys(imported).length,
+        pendingCount: pending.length,
+        storageBackend: getConfigStorageBackend(),
+        cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
+        warnings: buildProductionWarnings(),
+      });
+    }
+
     if (cronMode) {
       return NextResponse.json({
         ok: true,
@@ -284,17 +314,28 @@ export async function GET(req: Request) {
       });
     }
 
-    const files = await Promise.all(
-      pending.map(async (f) => {
-        const buffer = await downloadSpreadsheetFile(f, accessToken);
-        return {
-          id: f.id,
-          name: normalizeDownloadedFilename(f),
-          modifiedTime: f.modifiedTime ?? null,
-          contentBase64: buffer.toString('base64'),
-        };
-      })
+    const pendingSorted = [...pending].sort((a, b) =>
+      (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? '')
     );
+    const toDownload = pendingSorted.slice(0, MAX_SYNC_FILES);
+    const skippedCount = Math.max(0, pendingSorted.length - toDownload.length);
+
+    const files: {
+      id: string;
+      name: string;
+      modifiedTime: string | null;
+      contentBase64: string;
+    }[] = [];
+
+    for (const f of toDownload) {
+      const buffer = await downloadSpreadsheetFile(f, accessToken);
+      files.push({
+        id: f.id,
+        name: normalizeDownloadedFilename(f),
+        modifiedTime: f.modifiedTime ?? null,
+        contentBase64: buffer.toString('base64'),
+      });
+    }
 
     return NextResponse.json({
       ok: true,
@@ -304,6 +345,8 @@ export async function GET(req: Request) {
       totalInFolder: candidates.length,
       importedCount: Object.keys(imported).length,
       newCount: files.length,
+      pendingCount: pending.length,
+      skippedCount,
       storageBackend: getConfigStorageBackend(),
       cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
       warnings: buildProductionWarnings(),
