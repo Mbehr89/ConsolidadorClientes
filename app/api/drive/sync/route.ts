@@ -9,8 +9,28 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-/** Evita timeouts/respuestas gigantes en Vercel cuando no hay Redis y todo aparece como "nuevo". */
-const MAX_SYNC_FILES = 12;
+/** Límite bajo para evitar FUNCTION_INVOCATION_TIMEOUT en Vercel (10–60s). */
+const DEFAULT_SYNC_LIMIT = 2;
+const MAX_SYNC_LIMIT = 4;
+
+function parseSyncLimit(url: URL): number {
+  const raw = url.searchParams.get('limit');
+  if (!raw) return DEFAULT_SYNC_LIMIT;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_SYNC_LIMIT;
+  return Math.min(n, MAX_SYNC_LIMIT);
+}
+
+function parseExcludeIds(url: URL): Set<string> {
+  const raw = url.searchParams.get('exclude')?.trim();
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+  );
+}
 
 const EXCEL_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -250,6 +270,8 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const mode = url.searchParams.get('mode');
     const force = url.searchParams.get('force') === '1';
+    const syncLimit = parseSyncLimit(url);
+    const excludeIds = parseExcludeIds(url);
     const cronMode = mode === 'cron';
     if (cronMode && !isCronAuthorized(req)) {
       const missingCron = !process.env.CRON_SECRET?.trim();
@@ -314,10 +336,10 @@ export async function GET(req: Request) {
       });
     }
 
-    const pendingSorted = [...pending].sort((a, b) =>
-      (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? '')
-    );
-    const toDownload = pendingSorted.slice(0, MAX_SYNC_FILES);
+    const pendingSorted = [...pending]
+      .filter((f) => !excludeIds.has(f.id))
+      .sort((a, b) => (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? ''));
+    const toDownload = pendingSorted.slice(0, syncLimit);
     const skippedCount = Math.max(0, pendingSorted.length - toDownload.length);
 
     const files: {
@@ -347,6 +369,7 @@ export async function GET(req: Request) {
       newCount: files.length,
       pendingCount: pending.length,
       skippedCount,
+      syncLimit,
       storageBackend: getConfigStorageBackend(),
       cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
       warnings: buildProductionWarnings(),

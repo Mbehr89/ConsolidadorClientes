@@ -21,6 +21,50 @@ const BROKER_OPTIONS: { code: BrokerCode; label: string }[] = [
   { code: 'GMA', label: 'GMA' },
 ];
 
+const DRIVE_SYNC_LIMIT = 2;
+const DRIVE_FETCH_TIMEOUT_MS = 50_000;
+
+type DriveSyncPayload = {
+  error?: string;
+  ok?: boolean;
+  totalInFolder?: number;
+  pendingCount?: number;
+  skippedCount?: number;
+  syncLimit?: number;
+  warnings?: string[];
+  storageBackend?: string;
+  cronConfigured?: boolean;
+  files?: { id: string; name: string; modifiedTime: string | null; contentBase64: string }[];
+};
+
+async function fetchDriveApi(path: string, timeoutMs = DRIVE_FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(path, { cache: 'no-store', signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Timeout al contactar Drive (${Math.round(timeoutMs / 1000)}s). Probá de nuevo; el sync corre en lotes de ${DRIVE_SYNC_LIMIT} archivos.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readDriveJson(res: Response): Promise<DriveSyncPayload> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as DriveSyncPayload;
+  } catch {
+    throw new Error(
+      `HTTP ${res.status}: respuesta inválida del servidor (${text.slice(0, 160).replace(/\s+/g, ' ')})`
+    );
+  }
+}
+
 export default function UploadPage() {
   const { state, addFiles, setBrokerManual, removeFile, setFxManual, setFechaIeb, parseAll, reset } = useConsolidation();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -77,94 +121,107 @@ export default function UploadPage() {
     if (syncInFlightRef.current) return;
     syncInFlightRef.current = true;
     setIsSyncingDrive(true);
-    setDriveStatus(null);
+    setDriveStatus('Verificando conexión con Drive…');
+
+    const sessionExclude = new Set<string>();
+    let batch = 0;
+    let totalImported = 0;
+    let lastWarnings: string[] = [];
+    let totalInFolder: number | undefined;
+
     try {
-      type DriveSyncPayload = {
-        error?: string;
-        ok?: boolean;
-        totalInFolder?: number;
-        pendingCount?: number;
-        skippedCount?: number;
-        warnings?: string[];
-        storageBackend?: string;
-        cronConfigured?: boolean;
-        files?: { id: string; name: string; modifiedTime: string | null; contentBase64: string }[];
-      };
-
-      const readJson = async (res: Response): Promise<DriveSyncPayload> => {
-        const text = await res.text();
-        try {
-          return JSON.parse(text) as DriveSyncPayload;
-        } catch {
-          throw new Error(
-            `HTTP ${res.status}: respuesta inválida del servidor (${text.slice(0, 160).replace(/\s+/g, ' ')})`
-          );
-        }
-      };
-
-      const query = force ? '?force=1' : '';
-      const res = await fetch(`/api/drive/sync${query}`, { cache: 'no-store' });
-      const payload = await readJson(res);
-      if (!res.ok) {
+      const healthRes = await fetchDriveApi('/api/drive/sync?mode=health', 25_000);
+      const healthPayload = await readDriveJson(healthRes);
+      if (!healthRes.ok) {
         setDriveConnected(false);
-        setDriveStatus(payload.error ?? `No se pudo sincronizar con Drive (HTTP ${res.status}).`);
+        setDriveStatus(healthPayload.error ?? `Drive no disponible (HTTP ${healthRes.status}).`);
         return;
       }
       setDriveConnected(true);
+      lastWarnings = healthPayload.warnings ?? [];
+      totalInFolder = healthPayload.totalInFolder;
+
+      let existingNames = new Set(state.files.map((f) => f.filename.toLowerCase()));
+
+      while (true) {
+        batch += 1;
+        setDriveStatus(`Sincronizando Drive… lote ${batch} (máx. ${DRIVE_SYNC_LIMIT} archivos)`);
+
+        const params = new URLSearchParams();
+        params.set('limit', String(DRIVE_SYNC_LIMIT));
+        if (force) params.set('force', '1');
+        if (sessionExclude.size > 0) params.set('exclude', [...sessionExclude].join(','));
+
+        const res = await fetchDriveApi(`/api/drive/sync?${params.toString()}`);
+        const payload = await readDriveJson(res);
+        if (!res.ok) {
+          setDriveConnected(false);
+          setDriveStatus(payload.error ?? `No se pudo sincronizar con Drive (HTTP ${res.status}).`);
+          return;
+        }
+
+        lastWarnings = payload.warnings ?? lastWarnings;
+        totalInFolder = payload.totalInFolder ?? totalInFolder;
+
+        for (const f of payload.files ?? []) {
+          sessionExclude.add(f.id);
+        }
+
+        const allFromDrive = (payload.files ?? []).map((f) => {
+          const bytes = Uint8Array.from(atob(f.contentBase64), (c) => c.charCodeAt(0));
+          const ext = f.name.toLowerCase().endsWith('.xls')
+            ? 'application/vnd.ms-excel'
+            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+          return {
+            meta: { id: f.id, name: f.name, modifiedTime: f.modifiedTime },
+            file: new File([bytes], f.name, {
+              type: ext,
+              lastModified: f.modifiedTime ? Date.parse(f.modifiedTime) : Date.now(),
+            }),
+          };
+        });
+
+        const files = allFromDrive.filter((x) => !existingNames.has(x.file.name.toLowerCase()));
+
+        if (files.length > 0) {
+          await addFiles(files.map((x) => x.file));
+          for (const f of files) existingNames.add(f.file.name.toLowerCase());
+
+          const ackRes = await fetch('/api/drive/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: files.map((x) => x.meta) }),
+          });
+          if (!ackRes.ok) {
+            const ackPayload = await readDriveJson(ackRes);
+            setDriveConnected(false);
+            setDriveStatus(
+              `Lote ${batch}: archivos descargados (${files.length}) pero falló registrar importación: ${
+                ackPayload.error ?? 'error de storage'
+              }. Configurá Redis/KV en Vercel.`
+            );
+            return;
+          }
+          totalImported += files.length;
+        }
+
+        const remaining = payload.skippedCount ?? 0;
+        if (remaining <= 0 || (payload.files ?? []).length === 0) break;
+      }
 
       const warningText =
-        payload.warnings && payload.warnings.length > 0
-          ? ` Atención producción: ${payload.warnings.join(' ')}`
-          : '';
-      const skippedText =
-        payload.skippedCount && payload.skippedCount > 0
-          ? ` Se omitieron ${payload.skippedCount} archivo(s) en este sync (límite por request). Volvé a sincronizar para continuar.`
-          : '';
+        lastWarnings.length > 0 ? ` Atención producción: ${lastWarnings.join(' ')}` : '';
+      const detected =
+        typeof totalInFolder === 'number' ? ` (${totalInFolder} detectado/s en carpeta)` : '';
 
-      const allFromDrive = (payload.files ?? []).map((f) => {
-        const bytes = Uint8Array.from(atob(f.contentBase64), (c) => c.charCodeAt(0));
-        const ext = f.name.toLowerCase().endsWith('.xls') ? 'application/vnd.ms-excel' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-        return {
-          meta: { id: f.id, name: f.name, modifiedTime: f.modifiedTime },
-          file: new File([bytes], f.name, {
-            type: ext,
-            lastModified: f.modifiedTime ? Date.parse(f.modifiedTime) : Date.now(),
-          }),
-        };
-      });
-
-      // Evita duplicados si auto-sync corre dos veces (StrictMode/dev) o si ya están cargados.
-      const existingNames = new Set(state.files.map((f) => f.filename.toLowerCase()));
-      const files = allFromDrive.filter((x) => !existingNames.has(x.file.name.toLowerCase()));
-
-      if (files.length === 0) {
-        const detected =
-          typeof payload.totalInFolder === 'number' ? ` (${payload.totalInFolder} detectado/s)` : '';
+      if (totalImported === 0) {
         setDriveStatus(`Drive sincronizado${detected}. No hay archivos nuevos para importar.${warningText}`);
         return;
       }
 
-      await addFiles(files.map((x) => x.file));
-      const ackRes = await fetch('/api/drive/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          files: files.map((x) => x.meta),
-        }),
-      });
-      if (!ackRes.ok) {
-        const ackPayload = await readJson(ackRes);
-        setDriveConnected(false);
-        setDriveStatus(
-          `Archivos descargados (${files.length}), pero falló registrar la importación: ${
-            ackPayload.error ?? 'error de storage'
-          }.${warningText}`
-        );
-        return;
-      }
       setAutoParseAfterDrive(true);
       setDriveStatus(
-        `Importación automática completada: ${files.length} archivo(s) nuevos.${skippedText}${warningText}`
+        `Importación completada: ${totalImported} archivo(s) en ${batch} lote(s).${warningText}`
       );
     } catch (err) {
       setDriveConnected(false);
