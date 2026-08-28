@@ -21,8 +21,10 @@ const BROKER_OPTIONS: { code: BrokerCode; label: string }[] = [
   { code: 'GMA', label: 'GMA' },
 ];
 
-const DRIVE_SYNC_LIMIT = 2;
-const DRIVE_FETCH_TIMEOUT_MS = 50_000;
+const DRIVE_SYNC_LIMIT = 1;
+const DRIVE_FETCH_TIMEOUT_MS = 55_000;
+const DRIVE_HEALTH_TIMEOUT_MS = 15_000;
+const DRIVE_LIST_TIMEOUT_MS = 55_000;
 
 type DriveSyncPayload = {
   error?: string;
@@ -34,6 +36,7 @@ type DriveSyncPayload = {
   warnings?: string[];
   storageBackend?: string;
   cronConfigured?: boolean;
+  pendingFiles?: { id: string; name: string; modifiedTime: string | null }[];
   files?: { id: string; name: string; modifiedTime: string | null; contentBase64: string }[];
 };
 
@@ -123,14 +126,13 @@ export default function UploadPage() {
     setIsSyncingDrive(true);
     setDriveStatus('Verificando conexión con Drive…');
 
-    const sessionExclude = new Set<string>();
     let batch = 0;
     let totalImported = 0;
     let lastWarnings: string[] = [];
     let totalInFolder: number | undefined;
 
     try {
-      const healthRes = await fetchDriveApi('/api/drive/sync?mode=health', 25_000);
+      const healthRes = await fetchDriveApi('/api/drive/sync?mode=health', DRIVE_HEALTH_TIMEOUT_MS);
       const healthPayload = await readDriveJson(healthRes);
       if (!healthRes.ok) {
         setDriveConnected(false);
@@ -139,18 +141,35 @@ export default function UploadPage() {
       }
       setDriveConnected(true);
       lastWarnings = healthPayload.warnings ?? [];
-      totalInFolder = healthPayload.totalInFolder;
+
+      setDriveStatus('Listando archivos en Drive…');
+      const listParams = new URLSearchParams({ mode: 'list' });
+      if (force) listParams.set('force', '1');
+      const listRes = await fetchDriveApi(`/api/drive/sync?${listParams.toString()}`, DRIVE_LIST_TIMEOUT_MS);
+      const listPayload = await readDriveJson(listRes);
+      if (!listRes.ok) {
+        setDriveConnected(false);
+        setDriveStatus(listPayload.error ?? `No se pudo listar Drive (HTTP ${listRes.status}).`);
+        return;
+      }
+
+      lastWarnings = listPayload.warnings ?? lastWarnings;
+      totalInFolder = listPayload.totalInFolder;
 
       let existingNames = new Set(state.files.map((f) => f.filename.toLowerCase()));
+      const pendingToDownload = (listPayload.pendingFiles ?? []).filter(
+        (f) => !existingNames.has(f.name.toLowerCase())
+      );
 
-      while (true) {
+      for (let i = 0; i < pendingToDownload.length; i += DRIVE_SYNC_LIMIT) {
         batch += 1;
-        setDriveStatus(`Sincronizando Drive… lote ${batch} (máx. ${DRIVE_SYNC_LIMIT} archivos)`);
+        const chunk = pendingToDownload.slice(i, i + DRIVE_SYNC_LIMIT);
+        setDriveStatus(
+          `Sincronizando Drive… lote ${batch}/${Math.ceil(pendingToDownload.length / DRIVE_SYNC_LIMIT)} (${chunk.length} archivo(s))`
+        );
 
         const params = new URLSearchParams();
-        params.set('limit', String(DRIVE_SYNC_LIMIT));
-        if (force) params.set('force', '1');
-        if (sessionExclude.size > 0) params.set('exclude', [...sessionExclude].join(','));
+        params.set('ids', chunk.map((f) => f.id).join(','));
 
         const res = await fetchDriveApi(`/api/drive/sync?${params.toString()}`);
         const payload = await readDriveJson(res);
@@ -161,11 +180,6 @@ export default function UploadPage() {
         }
 
         lastWarnings = payload.warnings ?? lastWarnings;
-        totalInFolder = payload.totalInFolder ?? totalInFolder;
-
-        for (const f of payload.files ?? []) {
-          sessionExclude.add(f.id);
-        }
 
         const allFromDrive = (payload.files ?? []).map((f) => {
           const bytes = Uint8Array.from(atob(f.contentBase64), (c) => c.charCodeAt(0));
@@ -204,9 +218,6 @@ export default function UploadPage() {
           }
           totalImported += files.length;
         }
-
-        const remaining = payload.skippedCount ?? 0;
-        if (remaining <= 0 || (payload.files ?? []).length === 0) break;
       }
 
       const warningText =
@@ -221,7 +232,9 @@ export default function UploadPage() {
 
       setAutoParseAfterDrive(true);
       setDriveStatus(
-        `Importación completada: ${totalImported} archivo(s) en ${batch} lote(s).${warningText}`
+        totalImported === pendingToDownload.length
+          ? `Importación completada: ${totalImported} archivo(s) en ${batch} lote(s).${warningText}`
+          : `Importación parcial: ${totalImported} de ${pendingToDownload.length} archivo(s).${warningText}`
       );
     } catch (err) {
       setDriveConnected(false);

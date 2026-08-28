@@ -32,6 +32,16 @@ function parseExcludeIds(url: URL): Set<string> {
   );
 }
 
+function parseDownloadIds(url: URL): string[] {
+  const raw = url.searchParams.get('ids')?.trim();
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .slice(0, MAX_SYNC_LIMIT);
+}
+
 const EXCEL_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
@@ -154,18 +164,28 @@ async function driveFetch<T>(url: string, accessToken: string): Promise<T> {
 
 async function listFolderFiles(folderId: string, accessToken: string): Promise<DriveListFile[]> {
   const q = `'${folderId}' in parents and trashed=false`;
-  const url =
-    `https://www.googleapis.com/drive/v3/files?` +
-    new URLSearchParams({
+  const collected: DriveListFile[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const params = new URLSearchParams({
       q,
-      fields: 'files(id,name,mimeType,modifiedTime)',
+      fields: 'nextPageToken,files(id,name,mimeType,modifiedTime)',
       orderBy: 'modifiedTime desc',
       pageSize: '100',
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true',
-    }).toString();
-  const payload = await driveFetch<{ files?: DriveListFile[] }>(url, accessToken);
-  return payload.files ?? [];
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const payload = await driveFetch<{ files?: DriveListFile[]; nextPageToken?: string }>(
+      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+      accessToken
+    );
+    collected.push(...(payload.files ?? []));
+    pageToken = payload.nextPageToken;
+  } while (pageToken);
+
+  return collected;
 }
 
 async function listFolderFilesRecursive(
@@ -175,23 +195,56 @@ async function listFolderFilesRecursive(
   const queue = [rootFolderId];
   const visited = new Set<string>();
   const collected: DriveListFile[] = [];
+  const folderConcurrency = 4;
 
   while (queue.length > 0) {
-    const folderId = queue.shift()!;
-    if (visited.has(folderId)) continue;
-    visited.add(folderId);
+    const batch: string[] = [];
+    while (batch.length < folderConcurrency && queue.length > 0) {
+      const folderId = queue.shift()!;
+      if (visited.has(folderId)) continue;
+      visited.add(folderId);
+      batch.push(folderId);
+    }
+    if (batch.length === 0) continue;
 
-    const children = await listFolderFiles(folderId, accessToken);
-    for (const child of children) {
-      if (child.mimeType === GOOGLE_FOLDER_MIME) {
-        queue.push(child.id);
-        continue;
+    const folderResults = await Promise.all(
+      batch.map((folderId) => listFolderFiles(folderId, accessToken))
+    );
+
+    for (const children of folderResults) {
+      for (const child of children) {
+        if (child.mimeType === GOOGLE_FOLDER_MIME) {
+          if (!visited.has(child.id)) queue.push(child.id);
+          continue;
+        }
+        collected.push(child);
       }
-      collected.push(child);
     }
   }
 
   return collected;
+}
+
+async function verifyFolderAccess(folderId: string, accessToken: string): Promise<void> {
+  await driveFetch<{ id: string }>(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?` +
+      new URLSearchParams({
+        fields: 'id,name',
+        supportsAllDrives: 'true',
+      }).toString(),
+    accessToken
+  );
+}
+
+async function getDriveFileMeta(fileId: string, accessToken: string): Promise<DriveListFile> {
+  return driveFetch<DriveListFile>(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?` +
+      new URLSearchParams({
+        fields: 'id,name,mimeType,modifiedTime',
+        supportsAllDrives: 'true',
+      }).toString(),
+    accessToken
+  );
 }
 
 function isImportableSpreadsheet(file: DriveListFile): boolean {
@@ -272,7 +325,57 @@ export async function GET(req: Request) {
     const force = url.searchParams.get('force') === '1';
     const syncLimit = parseSyncLimit(url);
     const excludeIds = parseExcludeIds(url);
+    const downloadIds = parseDownloadIds(url);
     const cronMode = mode === 'cron';
+    const healthMode = mode === 'health';
+    const listMode = mode === 'list';
+
+    if (healthMode) {
+      const accessToken = await getServiceAccountAccessToken(cfg.clientEmail, cfg.privateKey);
+      await verifyFolderAccess(cfg.folderId, accessToken);
+      return NextResponse.json({
+        ok: true,
+        mode: 'health',
+        folderId: cfg.folderId,
+        storageBackend: getConfigStorageBackend(),
+        cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
+        warnings: buildProductionWarnings(),
+      });
+    }
+
+    if (downloadIds.length > 0) {
+      const accessToken = await getServiceAccountAccessToken(cfg.clientEmail, cfg.privateKey);
+      const files: {
+        id: string;
+        name: string;
+        modifiedTime: string | null;
+        contentBase64: string;
+      }[] = [];
+
+      for (const fileId of downloadIds) {
+        const meta = await getDriveFileMeta(fileId, accessToken);
+        if (!isImportableSpreadsheet(meta)) continue;
+        const buffer = await downloadSpreadsheetFile(meta, accessToken);
+        files.push({
+          id: meta.id,
+          name: normalizeDownloadedFilename(meta),
+          modifiedTime: meta.modifiedTime ?? null,
+          contentBase64: buffer.toString('base64'),
+        });
+      }
+
+      return NextResponse.json({
+        ok: true,
+        mode: 'download',
+        folderId: cfg.folderId,
+        newCount: files.length,
+        syncLimit: downloadIds.length,
+        storageBackend: getConfigStorageBackend(),
+        cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
+        warnings: buildProductionWarnings(),
+        files,
+      });
+    }
     if (cronMode && !isCronAuthorized(req)) {
       const missingCron = !process.env.CRON_SECRET?.trim();
       return NextResponse.json(
@@ -301,11 +404,11 @@ export async function GET(req: Request) {
           return false;
         });
 
-    const healthMode = mode === 'health';
-    if (healthMode) {
+    if (listMode) {
       return NextResponse.json({
         ok: true,
-        mode: 'health',
+        mode: 'list',
+        force,
         folderId: cfg.folderId,
         totalInFolder: candidates.length,
         importedCount: Object.keys(imported).length,
@@ -313,6 +416,11 @@ export async function GET(req: Request) {
         storageBackend: getConfigStorageBackend(),
         cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
         warnings: buildProductionWarnings(),
+        pendingFiles: pending.map((f) => ({
+          id: f.id,
+          name: f.name,
+          modifiedTime: f.modifiedTime ?? null,
+        })),
       });
     }
 
