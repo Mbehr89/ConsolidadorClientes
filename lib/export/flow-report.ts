@@ -25,6 +25,8 @@ export function exportExecutiveFlowReportPdf(args: {
   arsDurationValue?: number | null;
   usdTirValue?: number | null;
   usdDurationValue?: number | null;
+  hasArsBonds?: boolean;
+  hasUsdBonds?: boolean;
   currentValueUsd?: number;
   futureValueUsd?: number;
 }) {
@@ -38,6 +40,8 @@ export function exportExecutiveFlowReportPdf(args: {
     arsDurationValue,
     usdTirValue,
     usdDurationValue,
+    hasArsBonds,
+    hasUsdBonds,
     currentValueUsd,
     futureValueUsd,
   } = args;
@@ -123,6 +127,12 @@ export function exportExecutiveFlowReportPdf(args: {
   const totalProjected = rows.reduce((s, r) => s + r.intereses + r.amortizacion, 0);
   const currentValue = Number.isFinite(currentValueUsd) ? currentValueUsd ?? 0 : 0;
   const futureValue = Number.isFinite(futureValueUsd) ? futureValueUsd ?? 0 : totalProjected;
+  const showArsMetrics =
+    hasArsBonds ?? (arsTirValue != null || arsDurationValue != null);
+  const showUsdMetrics =
+    hasUsdBonds ?? (usdTirValue != null || usdDurationValue != null);
+  const splitColumns =
+    showArsMetrics && showUsdMetrics ? 'repeat(2, 1fr)' : '1fr';
   const docTitle = `Reporte Detallado de Flujo - ${portfolioId}`;
   const origin = window.location.origin;
   const headerLogoUrl = `${origin}/behr-advisory-header.png`;
@@ -201,17 +211,25 @@ export function exportExecutiveFlowReportPdf(args: {
         <div class="value">${fmtMoney(futureValue)}</div>
       </div>
     </div>
-    <div class="split-metrics">
-      <div class="split-card">
+    <div class="split-metrics" style="grid-template-columns:${splitColumns}">
+      ${
+        showArsMetrics
+          ? `<div class="split-card">
         <div class="split-title">Bonos ARS</div>
         <div class="split-row"><span>TIR:</span><strong>${fmtPctMaybe(arsTirValue)}</strong></div>
         <div class="split-row"><span>Duration:</span><strong>${fmtNumMaybe(arsDurationValue)}</strong></div>
-      </div>
-      <div class="split-card">
+      </div>`
+          : ''
+      }
+      ${
+        showUsdMetrics
+          ? `<div class="split-card">
         <div class="split-title">Bonos USD</div>
         <div class="split-row"><span>TIR:</span><strong>${fmtPctMaybe(usdTirValue)}</strong></div>
         <div class="split-row"><span>Duration:</span><strong>${fmtNumMaybe(usdDurationValue)}</strong></div>
-      </div>
+      </div>`
+          : ''
+      }
     </div>
 
     <h2>Cronograma Consolidado</h2>
@@ -279,6 +297,8 @@ export function exportFlowReportPdf(args: {
     arsDuration?: number | null;
     usdYtm?: number | null;
     usdDuration?: number | null;
+    hasArsBonds?: boolean;
+    hasUsdBonds?: boolean;
   };
   sections?: FlowReportSections;
 }) {
@@ -511,6 +531,40 @@ export function exportFlowReportPdf(args: {
     v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(2)}%`;
   const fmtNumMaybe = (v: number | null | undefined) =>
     v == null || !Number.isFinite(v) ? '—' : v.toFixed(2);
+
+  const metricsSummaryHtml = portfolioMetrics
+    ? `<div class="metrics-banner">
+        ${
+          portfolioMetrics.ytm != null || portfolioMetrics.duration != null
+            ? `<div class="metric-card">
+                <div class="metric-label">TIR cartera</div>
+                <div class="metric-value">${fmtPctMaybe(portfolioMetrics.ytm)}</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Duration modificada</div>
+                <div class="metric-value">${fmtNumMaybe(portfolioMetrics.duration)} años</div>
+              </div>`
+            : ''
+        }
+        ${
+          portfolioMetrics.hasArsBonds
+            ? `<div class="metric-card split">
+                <div class="metric-split-row"><span>Bonos ARS · TIR</span><strong>${fmtPctMaybe(portfolioMetrics.arsYtm)}</strong></div>
+                <div class="metric-split-row"><span>Bonos ARS · Dur.</span><strong>${fmtNumMaybe(portfolioMetrics.arsDuration)}</strong></div>
+              </div>`
+            : ''
+        }
+        ${
+          portfolioMetrics.hasUsdBonds
+            ? `<div class="metric-card split">
+                <div class="metric-split-row"><span>Bonos USD · TIR</span><strong>${fmtPctMaybe(portfolioMetrics.usdYtm)}</strong></div>
+                <div class="metric-split-row"><span>Bonos USD · Dur.</span><strong>${fmtNumMaybe(portfolioMetrics.usdDuration)}</strong></div>
+              </div>`
+            : ''
+        }
+      </div>`
+    : '';
+
   const compactHeader = `
     <div class="compact-head">
       <div class="compact-title">
@@ -520,14 +574,24 @@ export function exportFlowReportPdf(args: {
       ${
         portfolioMetrics
           ? `<div class="compact-metrics">
-              <span>TIR: ${fmtPctMaybe(portfolioMetrics.ytm)}</span>
-              <span>Dur: ${fmtNumMaybe(portfolioMetrics.duration)}</span>
-              <span>Valor actual: ${fmt(
-                totalsByCurrency.reduce((s, [, t]) => s + t.intereses + t.amortizacion, 0)
-              )}</span>
-              <span>Valor final: ${fmt(
-                totalsByCurrency.reduce((s, [, t]) => s + t.intereses + t.amortizacion, 0)
-              )}</span>
+              ${
+                portfolioMetrics.ytm != null || portfolioMetrics.duration != null
+                  ? `<span>TIR: ${fmtPctMaybe(portfolioMetrics.ytm)}</span>
+                     <span>Dur: ${fmtNumMaybe(portfolioMetrics.duration)} años</span>`
+                  : ''
+              }
+              ${
+                portfolioMetrics.hasArsBonds
+                  ? `<span>ARS TIR: ${fmtPctMaybe(portfolioMetrics.arsYtm)}</span>
+                     <span>ARS Dur: ${fmtNumMaybe(portfolioMetrics.arsDuration)}</span>`
+                  : ''
+              }
+              ${
+                portfolioMetrics.hasUsdBonds
+                  ? `<span>USD TIR: ${fmtPctMaybe(portfolioMetrics.usdYtm)}</span>
+                     <span>USD Dur: ${fmtNumMaybe(portfolioMetrics.usdDuration)}</span>`
+                  : ''
+              }
             </div>`
           : ''
       }
@@ -612,6 +676,12 @@ export function exportFlowReportPdf(args: {
     .compact-title { font-size: 12px; color:#1e3a8a; font-weight: 600; margin-bottom: 4px; display:flex; align-items:center; gap:8px; }
     .compact-logo { height: 34px; width:auto; }
     .compact-metrics { display:flex; flex-wrap:wrap; gap:10px; font-size:11px; color:#334155; font-family:Consolas,Menlo,monospace; }
+    .metrics-banner { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-bottom:12px; }
+    .metric-card { border:1px solid var(--line); border-radius:10px; background:#fff; padding:10px 12px; }
+    .metric-card.split { display:grid; gap:4px; }
+    .metric-label { font-size:11px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.3px; }
+    .metric-value { margin-top:4px; font-size:20px; font-weight:700; color:#1e3a8a; font-family:Consolas,Menlo,monospace; }
+    .metric-split-row { display:flex; justify-content:space-between; gap:8px; font-size:11px; color:#334155; }
     table { width:100%; border-collapse:collapse; font-size:12px; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
     thead th { background:#eff6ff; color:#1e3a8a; border-bottom:1px solid #dbeafe; font-weight:600; padding:8px; text-align:left; }
     tbody td { border-bottom:1px solid #f1f5f9; padding:7px 8px; text-align:left; }
@@ -646,6 +716,7 @@ export function exportFlowReportPdf(args: {
 <body>
   <div class="page">
     <div class="watermark"><img src="${watermarkLogoUrl}" alt="" /></div>
+    ${metricsSummaryHtml}
     ${monthlySectionHtml}
     ${annualSectionHtml}
     ${tableSectionHtml}

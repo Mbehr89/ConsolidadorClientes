@@ -6,6 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetrics, teaToTnaMonthly } from '@/lib/bonds/metrics';
+import {
+  paymentCurrencyByTickerFromEvents,
+  pickHomogeneousPortfolioMetrics,
+  summarizeWeightedBondMetrics,
+} from '@/lib/bonds/portfolio-metrics';
 import { issuerByTickerFromEvents, uniqueTickers } from '@/lib/bonds/parse-calendar';
 import { issuerLabel } from '@/lib/bonds/issuers';
 import { filterBondEventsByViewMode, tickersWithBothRegimes, type BondFlowViewMode } from '@/lib/bonds/flow-regime';
@@ -362,6 +367,54 @@ export default function BonosPage() {
     [portfolio, eventsView, valuationAsDate, dirtyN, nominalN, fx, preciosCarteraArs, fxCartera]
   );
 
+  const portfolioBondPdfMetrics = useMemo(() => {
+    const inputs = portfolioLinesWithMetrics
+      .filter(({ line }) => line.weightPct > 0)
+      .map(({ line, met }) => ({
+        ticker: line.ticker,
+        weightPct: line.weightPct,
+        metrics: met,
+      }));
+    if (inputs.length === 0) return null;
+
+    const paymentCurrency = paymentCurrencyByTickerFromEvents(eventsView, normalizeBondTicker);
+    const hasArsBonds = inputs.some(
+      (row) => paymentCurrency.get(normalizeBondTicker(row.ticker)) === 'ARS'
+    );
+    const hasUsdBonds = inputs.some(
+      (row) => paymentCurrency.get(normalizeBondTicker(row.ticker)) === 'USD'
+    );
+    const ars = summarizeWeightedBondMetrics(inputs, (row) =>
+      paymentCurrency.get(normalizeBondTicker(row.ticker)) === 'ARS'
+    );
+    const usd = summarizeWeightedBondMetrics(inputs, (row) =>
+      paymentCurrency.get(normalizeBondTicker(row.ticker)) === 'USD'
+    );
+    const overall = pickHomogeneousPortfolioMetrics(ars, usd, hasArsBonds, hasUsdBonds);
+
+    if (
+      overall.ytm == null &&
+      overall.modDuration == null &&
+      ars.ytm == null &&
+      ars.modDuration == null &&
+      usd.ytm == null &&
+      usd.modDuration == null
+    ) {
+      return { overall, ars, usd, hasArsBonds, hasUsdBonds };
+    }
+    return { overall, ars, usd, hasArsBonds, hasUsdBonds };
+  }, [portfolioLinesWithMetrics, eventsView]);
+
+  const portfolioAgg = useMemo(() => {
+    const picked = portfolioBondPdfMetrics?.overall;
+    if (!picked || (picked.ytm == null && picked.modDuration == null)) return null;
+    return {
+      modifiedDuration: picked.modDuration,
+      ytm: picked.ytm,
+      weightsNormalized: true,
+    };
+  }, [portfolioBondPdfMetrics]);
+
   const portfolioPositiveWeightSum = useMemo(
     () => portfolio.reduce((s, l) => s + (l.weightPct > 0 ? l.weightPct : 0), 0),
     [portfolio]
@@ -380,25 +433,6 @@ export default function BonosPage() {
     const v = dirtyN * fxCartera;
     return Number.isFinite(v) ? String(Math.round(v * 100) / 100) : '';
   }, [preciosCarteraArs, dirtyN, fxCartera]);
-
-  const portfolioAgg = useMemo(() => {
-    const lines = portfolioLinesWithMetrics.filter(({ line }) => line.weightPct > 0);
-    const sumW = lines.reduce((s, { line: l }) => s + l.weightPct, 0);
-    if (sumW <= 0) return null;
-    let wMod = 0;
-    let wYtm = 0;
-    for (const { line, met } of lines) {
-      const w = line.weightPct / sumW;
-      if (!met?.modifiedDuration || met.ytmAnnualEffective == null) continue;
-      wMod += w * met.modifiedDuration;
-      wYtm += w * met.ytmAnnualEffective;
-    }
-    return {
-      modifiedDuration: wMod,
-      ytm: wYtm,
-      weightsNormalized: true,
-    };
-  }, [portfolioLinesWithMetrics]);
 
   /** VN implícito por ticker (monto total × peso / precio). Sin monto: VN relativo = peso %. */
   const portfolioNominalByTicker = useMemo(() => {
@@ -1020,8 +1054,22 @@ export default function BonosPage() {
                         })),
                         totalsByCurrency: portfolioFlowTotalsByCurrency,
                         portfolioMetrics: {
-                          ytm: portfolioAgg?.ytm ?? null,
-                          duration: portfolioAgg?.modifiedDuration ?? null,
+                          ytm: portfolioBondPdfMetrics?.overall.ytm ?? null,
+                          duration: portfolioBondPdfMetrics?.overall.modDuration ?? null,
+                          arsYtm: portfolioBondPdfMetrics?.hasArsBonds
+                            ? portfolioBondPdfMetrics.ars.ytm
+                            : null,
+                          arsDuration: portfolioBondPdfMetrics?.hasArsBonds
+                            ? portfolioBondPdfMetrics.ars.modDuration
+                            : null,
+                          usdYtm: portfolioBondPdfMetrics?.hasUsdBonds
+                            ? portfolioBondPdfMetrics.usd.ytm
+                            : null,
+                          usdDuration: portfolioBondPdfMetrics?.hasUsdBonds
+                            ? portfolioBondPdfMetrics.usd.modDuration
+                            : null,
+                          hasArsBonds: portfolioBondPdfMetrics?.hasArsBonds ?? false,
+                          hasUsdBonds: portfolioBondPdfMetrics?.hasUsdBonds ?? false,
                         },
                         sections: flowPdfSections,
                       })
@@ -1045,8 +1093,22 @@ export default function BonosPage() {
                           intereses: r.intereses,
                           amortizacion: r.amortizacion,
                         })),
-                        tirValue: portfolioAgg?.ytm ?? null,
-                        durationValue: portfolioAgg?.modifiedDuration ?? null,
+                        tirValue: portfolioBondPdfMetrics?.overall.ytm ?? null,
+                        durationValue: portfolioBondPdfMetrics?.overall.modDuration ?? null,
+                        arsTirValue: portfolioBondPdfMetrics?.hasArsBonds
+                          ? portfolioBondPdfMetrics.ars.ytm
+                          : null,
+                        arsDurationValue: portfolioBondPdfMetrics?.hasArsBonds
+                          ? portfolioBondPdfMetrics.ars.modDuration
+                          : null,
+                        usdTirValue: portfolioBondPdfMetrics?.hasUsdBonds
+                          ? portfolioBondPdfMetrics.usd.ytm
+                          : null,
+                        usdDurationValue: portfolioBondPdfMetrics?.hasUsdBonds
+                          ? portfolioBondPdfMetrics.usd.modDuration
+                          : null,
+                        hasArsBonds: portfolioBondPdfMetrics?.hasArsBonds ?? false,
+                        hasUsdBonds: portfolioBondPdfMetrics?.hasUsdBonds ?? false,
                         currentValueUsd: totalCarteraNUsd ?? undefined,
                         futureValueUsd: portfolioModelFlows.absolute
                           ? portfolioFlowFutureValue

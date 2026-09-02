@@ -1,5 +1,5 @@
 import type { BondPaymentEvent, BondYieldMetrics } from './types';
-import { normalizeBondTicker } from './ticker-normalize';
+import { normalizeBondTicker, tickerEligibleForBondYield } from './ticker-normalize';
 
 const MS_PER_DAY = 86400000;
 const TOL_REL = 1e-9;
@@ -143,6 +143,16 @@ export function computeBondYieldMetrics(
   nominal: number,
   usdArsFxRate: number
 ): BondYieldMetrics {
+  if (!tickerEligibleForBondYield(ticker)) {
+    return {
+      ytmAnnualEffective: null,
+      macaulayYears: null,
+      modifiedDuration: null,
+      convexity: null,
+      npvAtZero: 0,
+      futureFlowsCount: 0,
+    };
+  }
   const flows = buildFutureFlows(events, ticker, valuationDate, nominal, usdArsFxRate);
   const npvAtZero = npvFlows(flows, 0);
   const V = (dirtyPricePer100 / 100) * nominal;

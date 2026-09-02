@@ -7,3 +7,11 @@ export function normalizeBondTicker(raw: string | null | undefined): string {
   return withDigits ?? parts[0]!;
 }
 
+/** Tickers de efectivo/moneda: no tienen calendario de cupones ni TIR de bono. */
+const NON_YIELD_TICKERS = new Set(['CASH', 'PESOS', 'USD', 'ARS', 'EUR', 'MEP']);
+
+export function tickerEligibleForBondYield(ticker: string | null | undefined): boolean {
+  const key = normalizeBondTicker(ticker);
+  return Boolean(key) && !NON_YIELD_TICKERS.has(key);
+}
+

@@ -8,10 +8,9 @@ import { formatCompact, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
 import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
-import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
+import { computeBondYieldMetricsForPosition } from '@/lib/bonds/position-yield';
 import { filterBondEventsByViewMode } from '@/lib/bonds/flow-regime';
 import { reviveBondEventsFromApi } from '@/lib/bonds/revive';
-import { normalizeBondTicker } from '@/lib/bonds/ticker-normalize';
 import { isCashBucketPosition } from '@/lib/cash-buckets';
 
 interface ActivoSummary {
@@ -103,42 +102,14 @@ const FORMA_OPTIONS: { value: string; label: string }[] = [
   { value: 'bono_local', label: 'Bono Local' },
 ];
 
-/** Misma metodología que en ficha cliente (precio sucio → `computeBondYieldMetrics`). */
+/** Misma metodología que en ficha cliente (`computeBondYieldMetricsForPosition`). */
 function computeBondYtmForPosition(
   p: Position,
   events: BondPaymentEvent[],
   valuationDate: Date
 ): number | null {
-  if (!(p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra')) return null;
-  if (!p.ticker) return null;
-  const nominal = Number.isFinite(p.cantidad) && p.cantidad > 0 ? p.cantidad : 100;
-  const fxFromPosition =
-    p.valor_mercado_usd != null && p.valor_mercado_usd > 0 && p.valor_mercado_local > 0
-      ? p.valor_mercado_local / p.valor_mercado_usd
-      : 1;
-  const usdArsFxRate = Number.isFinite(fxFromPosition) && fxFromPosition > 0 ? fxFromPosition : 1;
-  const unitPriceUsdFromStatement =
-    p.precio_mercado != null && Number.isFinite(p.precio_mercado)
-      ? p.moneda === 'USD'
-        ? p.precio_mercado
-        : p.precio_mercado / usdArsFxRate
-      : null;
-  const unitPriceUsdFromValuation =
-    nominal > 0 && p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd)
-      ? p.valor_mercado_usd / nominal
-      : null;
-  const unitPriceUsd = unitPriceUsdFromStatement ?? unitPriceUsdFromValuation;
-  if (unitPriceUsd == null || !Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) return null;
-  const dirtyPricePer100 = unitPriceUsd * 100;
-  const metrics = computeBondYieldMetrics(
-    events,
-    normalizeBondTicker(p.ticker),
-    valuationDate,
-    dirtyPricePer100,
-    nominal,
-    usdArsFxRate
-  );
-  const y = metrics.ytmAnnualEffective;
+  const metrics = computeBondYieldMetricsForPosition(p, events, valuationDate);
+  const y = metrics?.ytmAnnualEffective;
   return y != null && Number.isFinite(y) ? y : null;
 }
 

@@ -10,7 +10,8 @@ import { brokerColorClass, formatCompact, formatCurrency, formatPct } from '@/li
 import { BROKERS, isOffshore } from '@/lib/brokers';
 import type { Position, ClaseActivo } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
-import { computeBondYieldMetrics } from '@/lib/bonds/metrics';
+import { computeBondYieldMetricsForPosition } from '@/lib/bonds/position-yield';
+import type { BondYieldMetrics } from '@/lib/bonds/types';
 import {
   filterBondEventsByViewMode,
   tickersWithBothRegimes,
@@ -144,38 +145,12 @@ export default function GrupoDetailPage() {
   const showFlowRegimeToggle = useMemo(() => tickersWithBothRegimes(bondEvents).length > 0, [bondEvents]);
 
   const bondMetricsByRow = useMemo(() => {
-    const out = new Map<number, ReturnType<typeof computeBondYieldMetrics>>();
+    const out = new Map<Position, BondYieldMetrics>();
     const now = new Date();
     const valuationDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     for (const p of positions) {
-      if (!(p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra')) continue;
-      if (!p.ticker) continue;
-      const nominal = Number.isFinite(p.cantidad) && p.cantidad > 0 ? p.cantidad : 100;
-      const fxFromPosition =
-        p.valor_mercado_usd != null && p.valor_mercado_usd > 0 && p.valor_mercado_local > 0
-          ? p.valor_mercado_local / p.valor_mercado_usd
-          : 1;
-      const usdArsFxRate = Number.isFinite(fxFromPosition) && fxFromPosition > 0 ? fxFromPosition : 1;
-      const unitPriceUsdFromStatement =
-        p.precio_mercado != null && Number.isFinite(p.precio_mercado)
-          ? (p.moneda === 'USD' ? p.precio_mercado : p.precio_mercado / usdArsFxRate)
-          : null;
-      const unitPriceUsdFromValuation =
-        nominal > 0 && p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd)
-          ? p.valor_mercado_usd / nominal
-          : null;
-      const unitPriceUsd = unitPriceUsdFromStatement ?? unitPriceUsdFromValuation;
-      if (unitPriceUsd == null || !Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) continue;
-      const dirtyPricePer100 = unitPriceUsd * 100;
-      const metrics = computeBondYieldMetrics(
-        bondEventsView,
-        normalizeBondTicker(p.ticker),
-        valuationDate,
-        dirtyPricePer100,
-        nominal,
-        usdArsFxRate
-      );
-      out.set(p.source_row, metrics);
+      const metrics = computeBondYieldMetricsForPosition(p, bondEventsView, valuationDate);
+      if (metrics) out.set(p, metrics);
     }
     return out;
   }, [positions, bondEventsView]);
@@ -185,7 +160,7 @@ export default function GrupoDetailPage() {
       (p) => p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra'
     );
     const rowsWithMetrics = bondRows
-      .map((p) => ({ p, m: bondMetricsByRow.get(p.source_row) }))
+      .map((p) => ({ p, m: bondMetricsByRow.get(p) }))
       .filter(({ p, m }) => (p.valor_mercado_usd ?? 0) > 0 && m != null);
     const summarize = (subset: typeof rowsWithMetrics) => {
       const ytmRows = subset.filter(
@@ -248,7 +223,7 @@ export default function GrupoDetailPage() {
     const bondRows = positions.filter(
       (p) => p.clase_activo === 'bond' || p.clase_activo === 'on' || p.clase_activo === 'letra'
     );
-    const withMetrics = bondRows.map((p) => ({ p, m: bondMetricsByRow.get(p.source_row) }));
+    const withMetrics = bondRows.map((p) => ({ p, m: bondMetricsByRow.get(p) }));
     const ytmRows = withMetrics.filter(
       ({ p, m }) =>
         (p.valor_mercado_usd ?? 0) > 0 &&
@@ -320,11 +295,11 @@ export default function GrupoDetailPage() {
     const calendarTickers = new Set(bondEvents.map((ev) => normalizeBondTicker(ev.asset)).filter(Boolean));
     const missingTickers = portfolioTickers.filter((t) => !calendarTickers.has(t));
     const ytmCount = bondPositions.filter((p) => {
-      const m = bondMetricsByRow.get(p.source_row);
+      const m = bondMetricsByRow.get(p);
       return m?.ytmAnnualEffective != null && Number.isFinite(m.ytmAnnualEffective);
     }).length;
     const durationCount = bondPositions.filter((p) => {
-      const m = bondMetricsByRow.get(p.source_row);
+      const m = bondMetricsByRow.get(p);
       return m?.modifiedDuration != null && Number.isFinite(m.modifiedDuration);
     }).length;
     return {
@@ -659,8 +634,8 @@ export default function GrupoDetailPage() {
                         )}
                       </td>
                       <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
-                      <td className="p-2 text-right font-mono">{formatYtmPct(bondMetricsByRow.get(p.source_row)?.ytmAnnualEffective)}</td>
-                      <td className="p-2 text-right font-mono">{formatNumberOrDash(bondMetricsByRow.get(p.source_row)?.modifiedDuration)}</td>
+                      <td className="p-2 text-right font-mono">{formatYtmPct(bondMetricsByRow.get(p)?.ytmAnnualEffective)}</td>
+                      <td className="p-2 text-right font-mono">{formatNumberOrDash(bondMetricsByRow.get(p)?.modifiedDuration)}</td>
                     </tr>
                   ))}
               </tbody>
