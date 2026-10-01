@@ -359,6 +359,12 @@ export default function GrupoDetailPage() {
     return list;
   }, [positions, selectedClassSet, selectedCuentaSet, sortBy, sortDir, totalUsd]);
 
+  const selectionTotalUsd = useMemo(
+    () => sortedPositions.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0),
+    [sortedPositions]
+  );
+  const isFilteredSelection = sortedPositions.length !== positions.length;
+
   const sortedCashPositions = useMemo(() => {
     const list = sortedPositions.filter(isCashLike);
     list.sort((a, b) => {
@@ -545,6 +551,11 @@ export default function GrupoDetailPage() {
           <CardTitle className="text-lg">
             Todas las posiciones ({sortedPositions.length} visibles de {positions.length})
           </CardTitle>
+          {isFilteredSelection && (
+            <p className="text-xs text-muted-foreground">
+              Selección: {formatCurrency(selectionTotalUsd)} ({totalUsd > 0 ? formatPct((selectionTotalUsd / totalUsd) * 100) : '—'} del grupo). Los % de la tabla son sobre la selección.
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           <div className="mb-3 flex flex-wrap items-end gap-3">
@@ -691,7 +702,9 @@ export default function GrupoDetailPage() {
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Precio ARS</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Precio USD</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valor USD</th>
-                  <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">% Portfolio</th>
+                  <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">
+                    {isFilteredSelection ? '% Selección' : '% Portfolio'}
+                  </th>
                   <th className="p-2 text-xs font-medium text-muted-foreground uppercase">⚠</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valuación ARS</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">TIR</th>
@@ -725,7 +738,7 @@ export default function GrupoDetailPage() {
                     <td className="p-2 text-right font-mono">—</td>
                     <td className="p-2 text-right font-mono font-medium">{formatCurrency(cashTotals.usd)}</td>
                     <td className="p-2 text-right text-muted-foreground">
-                      {totalUsd > 0 ? formatPct((cashTotals.usd / totalUsd) * 100) : '—'}
+                      {selectionTotalUsd > 0 ? formatPct((cashTotals.usd / selectionTotalUsd) * 100) : '—'}
                     </td>
                     <td className="p-2">—</td>
                     <td className="p-2 text-right font-mono">
@@ -740,7 +753,7 @@ export default function GrupoDetailPage() {
                     <GrupoPositionRow
                       key={`cash-${p.source_file}-${p.source_row}`}
                       p={p}
-                      totalUsd={totalUsd}
+                      totalUsd={selectionTotalUsd}
                       metrics={undefined}
                       tickerLabel={`CASH · ${cashBucketLabel(getCashBucketKey(p))}`}
                       nested
@@ -751,7 +764,7 @@ export default function GrupoDetailPage() {
                     <GrupoPositionRow
                       key={`${p.source_file}-${p.source_row}`}
                       p={p}
-                      totalUsd={totalUsd}
+                      totalUsd={selectionTotalUsd}
                       metrics={bondMetricsByRow.get(p)}
                     />
                   ))}
@@ -760,7 +773,7 @@ export default function GrupoDetailPage() {
                     if (g.items.length === 1) {
                       const p = g.items[0]!;
                       return (
-                        <GrupoPositionRow key={g.key} p={p} totalUsd={totalUsd} metrics={bondMetricsByRow.get(p)} />
+                        <GrupoPositionRow key={g.key} p={p} totalUsd={selectionTotalUsd} metrics={bondMetricsByRow.get(p)} />
                       );
                     }
                     const expanded = expandedTickers.has(g.key);
@@ -768,7 +781,7 @@ export default function GrupoDetailPage() {
                       <Fragment key={g.key}>
                         <GrupoGroupedTickerRow
                           items={g.items}
-                          totalUsd={totalUsd}
+                          totalUsd={selectionTotalUsd}
                           bondMetricsByRow={bondMetricsByRow}
                           expanded={expanded}
                           onToggle={() => toggleTickerExpanded(g.key)}
@@ -778,7 +791,7 @@ export default function GrupoDetailPage() {
                             <GrupoPositionRow
                               key={`${g.key}-${p.source_file}-${p.source_row}`}
                               p={p}
-                              totalUsd={totalUsd}
+                              totalUsd={selectionTotalUsd}
                               metrics={bondMetricsByRow.get(p)}
                               nested
                             />

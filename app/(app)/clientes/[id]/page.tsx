@@ -395,6 +395,9 @@ export default function ClienteDetailPage() {
     return { count, usd, ars };
   }, [sortedCashPositions]);
   const visiblePositionsCount = sortedCashPositions.length + sortedNonCashPositions.length;
+  const selectionTotalUsd =
+    cashTotals.usd + sortedNonCashPositions.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+  const isFilteredSelection = visiblePositionsCount !== positions.length;
 
   if (!state.hasParsed) {
     return (
@@ -530,6 +533,11 @@ export default function ClienteDetailPage() {
           <CardTitle className="text-lg">
             Todas las posiciones ({visiblePositionsCount} visibles de {positions.length})
           </CardTitle>
+          {isFilteredSelection && (
+            <p className="text-xs text-muted-foreground">
+              Selección: {formatCurrency(selectionTotalUsd)} ({totalUsd > 0 ? formatPct((selectionTotalUsd / totalUsd) * 100) : '—'} del cliente). Los % de la tabla son sobre la selección.
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           <div className="mb-3 flex flex-wrap items-end gap-3">
@@ -640,7 +648,9 @@ export default function ClienteDetailPage() {
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valor USD</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">Valor ARS</th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Forma Legal</th>
-                  <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">% Portfolio</th>
+                  <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">
+                    {isFilteredSelection ? '% Selección' : '% Portfolio'}
+                  </th>
                   <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Moneda</th>
                   <th className="p-2 text-xs font-medium text-muted-foreground uppercase">⚠</th>
                   <th className="text-right p-2 text-xs font-medium text-muted-foreground uppercase">TIR</th>
@@ -680,7 +690,7 @@ export default function ClienteDetailPage() {
                     </td>
                     <td className="p-2 text-xs text-muted-foreground">—</td>
                     <td className="p-2 text-right text-muted-foreground">
-                      {totalUsd > 0 ? formatPct((cashTotals.usd / totalUsd) * 100) : '—'}
+                      {selectionTotalUsd > 0 ? formatPct((cashTotals.usd / selectionTotalUsd) * 100) : '—'}
                     </td>
                     <td className="p-2 text-xs">Mixto</td>
                     <td className="p-2">—</td>
@@ -703,7 +713,7 @@ export default function ClienteDetailPage() {
                     <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
                     <td className="p-2 text-xs text-muted-foreground">{p.forma_legal ?? '—'}</td>
                     <td className="p-2 text-right text-muted-foreground">
-                      {totalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / totalUsd) * 100) : '—'}
+                      {selectionTotalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / selectionTotalUsd) * 100) : '—'}
                     </td>
                     <td className="p-2 text-xs">{p.moneda}{p.moneda_subtipo ? ` (${p.moneda_subtipo})` : ''}</td>
                     <td className="p-2">{p.warnings.length > 0 && <span className="text-amber-500" title={p.warnings.join('\n')}>⚠ {p.warnings.length}</span>}</td>
@@ -716,7 +726,7 @@ export default function ClienteDetailPage() {
                     <PositionRow
                       key={`${p.source_file}-${p.source_row}`}
                       p={p}
-                      totalUsd={totalUsd}
+                      totalUsd={selectionTotalUsd}
                       metrics={bondMetricsByRow.get(p)}
                     />
                   ))}
@@ -728,7 +738,7 @@ export default function ClienteDetailPage() {
                         <PositionRow
                           key={g.key}
                           p={p}
-                          totalUsd={totalUsd}
+                          totalUsd={selectionTotalUsd}
                           metrics={bondMetricsByRow.get(p)}
                         />
                       );
@@ -738,7 +748,7 @@ export default function ClienteDetailPage() {
                       <Fragment key={g.key}>
                         <GroupedTickerRow
                           items={g.items}
-                          totalUsd={totalUsd}
+                          totalUsd={selectionTotalUsd}
                           bondMetricsByRow={bondMetricsByRow}
                           expanded={expanded}
                           onToggle={() => toggleTickerExpanded(g.key)}
@@ -748,7 +758,7 @@ export default function ClienteDetailPage() {
                             <PositionRow
                               key={`${g.key}-${p.source_file}-${p.source_row}`}
                               p={p}
-                              totalUsd={totalUsd}
+                              totalUsd={selectionTotalUsd}
                               metrics={bondMetricsByRow.get(p)}
                               nested
                             />
