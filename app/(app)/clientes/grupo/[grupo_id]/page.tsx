@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useConsolidation } from '@/lib/context/consolidation-context';
@@ -25,6 +25,8 @@ import { ExportPortfolioJsonButton } from '@/components/export-portfolio-json-bu
 import { ExportPdfButton } from '@/components/export-pdf-button';
 import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/flow-report';
 import { formatArsPrice, formatUsdPrice } from '@/lib/format-position-price';
+import { instrumentKey } from '@/lib/analysis/exposure';
+import { cashBucketLabel, getCashBucketKey } from '@/lib/cash-buckets';
 
 export default function GrupoDetailPage() {
   const params = useParams();
@@ -36,6 +38,9 @@ export default function GrupoDetailPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selectedClasses, setSelectedClasses] = useState<ClaseActivo[]>([]);
   const [selectedCuentas, setSelectedCuentas] = useState<string[]>([]);
+  const [cashExpanded, setCashExpanded] = useState(false);
+  const [groupByTicker, setGroupByTicker] = useState(true);
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(() => new Set());
   const [flowPdfSections, setFlowPdfSections] = useState({
     monthlyByBond: true,
     annualDualAxis: true,
@@ -354,6 +359,68 @@ export default function GrupoDetailPage() {
     return list;
   }, [positions, selectedClassSet, selectedCuentaSet, sortBy, sortDir, totalUsd]);
 
+  const sortedCashPositions = useMemo(() => {
+    const list = sortedPositions.filter(isCashLike);
+    list.sort((a, b) => {
+      const cmp = cashBucketLabel(getCashBucketKey(a)).localeCompare(cashBucketLabel(getCashBucketKey(b)));
+      if (cmp !== 0) return cmp;
+      return (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0);
+    });
+    return list;
+  }, [sortedPositions]);
+
+  const sortedNonCashPositions = useMemo(
+    () => sortedPositions.filter((p) => !isCashLike(p)),
+    [sortedPositions]
+  );
+
+  const cashTotals = useMemo(() => {
+    const usd = sortedCashPositions.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+    const ars = sortedCashPositions.reduce((s, p) => s + (getArsValuationNumber(p) ?? 0), 0);
+    const allOffshore = sortedCashPositions.every((p) => isOffshore(p.broker));
+    return { count: sortedCashPositions.length, usd, ars, allOffshore };
+  }, [sortedCashPositions]);
+
+  const nonCashGroups = useMemo(() => {
+    const map = new Map<string, Position[]>();
+    for (const p of sortedNonCashPositions) {
+      const k = instrumentKey(p);
+      const list = map.get(k);
+      if (list) list.push(p);
+      else map.set(k, [p]);
+    }
+    const groups = [...map.entries()].map(([key, list]) => {
+      const items = [...list].sort((a, b) => (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0));
+      const usd = items.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+      return { key, items, usd, clase: items[0]!.clase_activo };
+    });
+    groups.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === 'clase') {
+        cmp = a.clase.localeCompare(b.clase);
+        if (cmp === 0) cmp = a.usd - b.usd;
+      } else {
+        cmp = a.usd - b.usd;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return groups;
+  }, [sortedNonCashPositions, sortBy, sortDir]);
+
+  const repeatedGroupKeys = useMemo(
+    () => nonCashGroups.filter((g) => g.items.length > 1).map((g) => g.key),
+    [nonCashGroups]
+  );
+
+  const toggleTickerExpanded = (key: string) => {
+    setExpandedTickers((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   if (!state.hasParsed) {
     return (
       <div>
@@ -578,6 +645,38 @@ export default function GrupoDetailPage() {
                 })}
               </div>
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Vista</label>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={groupByTicker ? 'default' : 'outline'}
+                  className={groupByTicker ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined}
+                  onClick={() => setGroupByTicker((v) => !v)}
+                >
+                  Agrupar por ticker
+                </Button>
+                {groupByTicker && repeatedGroupKeys.length > 0 && (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setExpandedTickers(new Set(repeatedGroupKeys))}
+                    >
+                      Expandir todos
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setExpandedTickers(new Set())}>
+                      Colapsar
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {repeatedGroupKeys.length} ticker{repeatedGroupKeys.length > 1 ? 's' : ''} en más de una cuenta/broker
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
           <div className="overflow-auto max-h-[500px]">
             <table className="w-full min-w-[1700px] text-sm">
@@ -600,44 +699,93 @@ export default function GrupoDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedPositions.map((p, i) => (
-                    <tr key={i} className="border-b border-border/50 hover:bg-muted/50">
-                      <td className="p-2">
-                        <Badge variant="outline" className={brokerColorClass(p.broker)}>
-                          {p.broker}
-                        </Badge>
-                      </td>
-                      <td className="p-2 text-xs font-mono text-muted-foreground">{p.cuenta}</td>
-                      <td className="p-2 text-xs">
-                        <Link href={`/clientes/${encodeURIComponent(p.cliente_id)}`} className="text-primary hover:underline">
-                          {p.titular}
-                        </Link>
-                      </td>
-                      <td className="p-2 font-mono">{p.ticker ?? '—'}</td>
-                      <td className="p-2">
-                        <Badge variant="secondary" className="text-xs">
-                          {p.clase_activo}
-                        </Badge>
-                      </td>
-                      <td className="p-2 text-right font-mono">{p.cantidad.toLocaleString()}</td>
-                      <td className="p-2 text-right font-mono">{formatArsPrice(p)}</td>
-                      <td className="p-2 text-right font-mono">{formatUsdPrice(p)}</td>
-                      <td className="p-2 text-right font-mono font-medium">{formatCurrency(p.valor_mercado_usd ?? 0)}</td>
-                      <td className="p-2 text-right text-muted-foreground">
-                        {totalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / totalUsd) * 100) : '—'}
-                      </td>
-                      <td className="p-2">
-                        {p.warnings.length > 0 && (
-                          <span className="text-amber-500" title={p.warnings.join('\n')}>
-                            ⚠ {p.warnings.length}
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
-                      <td className="p-2 text-right font-mono">{formatYtmPct(bondMetricsByRow.get(p)?.ytmAnnualEffective)}</td>
-                      <td className="p-2 text-right font-mono">{formatNumberOrDash(bondMetricsByRow.get(p)?.modifiedDuration)}</td>
-                    </tr>
+                {cashTotals.count > 0 && (
+                  <tr className="border-b border-border/70 bg-muted/20">
+                    <td className="p-2">
+                      <Badge variant="outline" className="font-semibold">CASH</Badge>
+                    </td>
+                    <td className="p-2 text-xs text-muted-foreground">—</td>
+                    <td className="p-2 text-xs text-muted-foreground">
+                      {new Set(sortedCashPositions.map((p) => p.cliente_id)).size} clientes
+                    </td>
+                    <td className="p-2">
+                      <button
+                        type="button"
+                        className="font-mono text-sm text-primary hover:underline"
+                        onClick={() => setCashExpanded((v) => !v)}
+                      >
+                        {cashExpanded ? '▼' : '▶'} CASH agregado ({cashTotals.count} posiciones)
+                      </button>
+                    </td>
+                    <td className="p-2">
+                      <Badge variant="secondary" className="text-xs">cash</Badge>
+                    </td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono font-medium">{formatCurrency(cashTotals.usd)}</td>
+                    <td className="p-2 text-right text-muted-foreground">
+                      {totalUsd > 0 ? formatPct((cashTotals.usd / totalUsd) * 100) : '—'}
+                    </td>
+                    <td className="p-2">—</td>
+                    <td className="p-2 text-right font-mono">
+                      {cashTotals.allOffshore ? '—' : formatArsAmount(cashTotals.ars)}
+                    </td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">—</td>
+                  </tr>
+                )}
+                {cashExpanded &&
+                  sortedCashPositions.map((p) => (
+                    <GrupoPositionRow
+                      key={`cash-${p.source_file}-${p.source_row}`}
+                      p={p}
+                      totalUsd={totalUsd}
+                      metrics={undefined}
+                      tickerLabel={`CASH · ${cashBucketLabel(getCashBucketKey(p))}`}
+                      nested
+                    />
                   ))}
+                {!groupByTicker &&
+                  sortedNonCashPositions.map((p) => (
+                    <GrupoPositionRow
+                      key={`${p.source_file}-${p.source_row}`}
+                      p={p}
+                      totalUsd={totalUsd}
+                      metrics={bondMetricsByRow.get(p)}
+                    />
+                  ))}
+                {groupByTicker &&
+                  nonCashGroups.map((g) => {
+                    if (g.items.length === 1) {
+                      const p = g.items[0]!;
+                      return (
+                        <GrupoPositionRow key={g.key} p={p} totalUsd={totalUsd} metrics={bondMetricsByRow.get(p)} />
+                      );
+                    }
+                    const expanded = expandedTickers.has(g.key);
+                    return (
+                      <Fragment key={g.key}>
+                        <GrupoGroupedTickerRow
+                          items={g.items}
+                          totalUsd={totalUsd}
+                          bondMetricsByRow={bondMetricsByRow}
+                          expanded={expanded}
+                          onToggle={() => toggleTickerExpanded(g.key)}
+                        />
+                        {expanded &&
+                          g.items.map((p) => (
+                            <GrupoPositionRow
+                              key={`${g.key}-${p.source_file}-${p.source_row}`}
+                              p={p}
+                              totalUsd={totalUsd}
+                              metrics={bondMetricsByRow.get(p)}
+                              nested
+                            />
+                          ))}
+                      </Fragment>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
@@ -911,12 +1059,12 @@ function aggregate(positions: Position[], keyFn: (p: Position) => string): Recor
   }, {});
 }
 
-function formatArsValuation(p: Position): string {
-  if (isOffshore(p.broker)) return '—';
-  let arsValue: number | null = null;
+function getArsValuationNumber(p: Position): number | null {
+  if (isOffshore(p.broker)) return null;
   if (Number.isFinite(p.valor_mercado_local) && p.valor_mercado_local > 0 && p.moneda === 'ARS') {
-    arsValue = p.valor_mercado_local;
-  } else if (
+    return p.valor_mercado_local;
+  }
+  if (
     p.valor_mercado_usd != null &&
     Number.isFinite(p.valor_mercado_usd) &&
     p.valor_mercado_usd > 0 &&
@@ -924,17 +1072,184 @@ function formatArsValuation(p: Position): string {
     p.valor_mercado_local > 0
   ) {
     const fx = p.valor_mercado_local / p.valor_mercado_usd;
-    arsValue = p.valor_mercado_usd * fx;
-  } else if (p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd) && p.valor_mercado_usd > 0) {
-    arsValue = p.valor_mercado_usd;
+    return p.valor_mercado_usd * fx;
   }
-  if (arsValue == null || !Number.isFinite(arsValue)) return '—';
-  return arsValue.toLocaleString('es-AR', {
+  if (p.valor_mercado_usd != null && Number.isFinite(p.valor_mercado_usd) && p.valor_mercado_usd > 0) {
+    return p.valor_mercado_usd;
+  }
+  return null;
+}
+
+function formatArsAmount(v: number): string {
+  return v.toLocaleString('es-AR', {
     style: 'currency',
     currency: 'ARS',
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
+}
+
+function formatArsValuation(p: Position): string {
+  const arsValue = getArsValuationNumber(p);
+  if (arsValue == null || !Number.isFinite(arsValue)) return '—';
+  return formatArsAmount(arsValue);
+}
+
+function isCashLike(p: Position): boolean {
+  return p.clase_activo === 'cash' || (p.ticker ?? '').toUpperCase() === 'CASH';
+}
+
+function GrupoPositionRow({
+  p,
+  totalUsd,
+  metrics,
+  tickerLabel,
+  nested = false,
+}: {
+  p: Position;
+  totalUsd: number;
+  metrics: BondYieldMetrics | undefined;
+  tickerLabel?: string;
+  nested?: boolean;
+}) {
+  const label = tickerLabel ?? p.ticker ?? '—';
+  return (
+    <tr
+      className={
+        nested
+          ? 'border-b border-border/40 bg-muted/10 hover:bg-muted/40'
+          : 'border-b border-border/50 hover:bg-muted/50'
+      }
+    >
+      <td className={nested ? 'p-2 pl-6' : 'p-2'}>
+        <Badge variant="outline" className={brokerColorClass(p.broker)}>
+          {p.broker}
+        </Badge>
+      </td>
+      <td className="p-2 text-xs font-mono text-muted-foreground">{p.cuenta}</td>
+      <td className="p-2 text-xs">
+        <Link href={`/clientes/${encodeURIComponent(p.cliente_id)}`} className="text-primary hover:underline">
+          {p.titular}
+        </Link>
+      </td>
+      <td className="p-2 font-mono">
+        {nested ? <span className="text-xs text-muted-foreground">└ {label}</span> : label}
+      </td>
+      <td className="p-2">
+        <Badge variant="secondary" className="text-xs">
+          {p.clase_activo}
+        </Badge>
+      </td>
+      <td className="p-2 text-right font-mono">{p.cantidad.toLocaleString()}</td>
+      <td className="p-2 text-right font-mono">{formatArsPrice(p)}</td>
+      <td className="p-2 text-right font-mono">{formatUsdPrice(p)}</td>
+      <td className="p-2 text-right font-mono font-medium">{formatCurrency(p.valor_mercado_usd ?? 0)}</td>
+      <td className="p-2 text-right text-muted-foreground">
+        {totalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / totalUsd) * 100) : '—'}
+      </td>
+      <td className="p-2">
+        {p.warnings.length > 0 && (
+          <span className="text-amber-500" title={p.warnings.join('\n')}>
+            ⚠ {p.warnings.length}
+          </span>
+        )}
+      </td>
+      <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
+      <td className="p-2 text-right font-mono">{formatYtmPct(metrics?.ytmAnnualEffective)}</td>
+      <td className="p-2 text-right font-mono">{formatNumberOrDash(metrics?.modifiedDuration)}</td>
+    </tr>
+  );
+}
+
+function GrupoGroupedTickerRow({
+  items,
+  totalUsd,
+  bondMetricsByRow,
+  expanded,
+  onToggle,
+}: {
+  items: Position[];
+  totalUsd: number;
+  bondMetricsByRow: Map<Position, BondYieldMetrics>;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const first = items[0]!;
+  const brokers = [...new Set(items.map((p) => p.broker))];
+  const cuentas = new Set(items.map((p) => `${p.broker}:${p.cuenta}`));
+  const clientes = new Map(items.map((p) => [p.cliente_id, p.titular] as const));
+  const clases = new Set(items.map((p) => p.clase_activo));
+  const qty = items.reduce((s, p) => s + p.cantidad, 0);
+  const usd = items.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+  const allOffshore = items.every((p) => isOffshore(p.broker));
+  const ars = items.reduce((s, p) => s + (getArsValuationNumber(p) ?? 0), 0);
+  const warnings = items.flatMap((p) => p.warnings);
+  const weighted = (pick: (m: BondYieldMetrics) => number | null | undefined): number | null => {
+    let num = 0;
+    let den = 0;
+    for (const p of items) {
+      const m = bondMetricsByRow.get(p);
+      const v = m ? pick(m) : null;
+      const w = p.valor_mercado_usd ?? 0;
+      if (v == null || !Number.isFinite(v) || w <= 0) continue;
+      num += v * w;
+      den += w;
+    }
+    return den > 0 ? num / den : null;
+  };
+  const [singleClienteId, singleTitular] = clientes.size === 1 ? [...clientes.entries()][0]! : [null, null];
+
+  return (
+    <tr className="border-b border-border/70 bg-muted/20 hover:bg-muted/40">
+      <td className="p-2">
+        <div className="flex flex-wrap gap-1">
+          {brokers.map((b) => (
+            <Badge key={b} variant="outline" className={brokerColorClass(b)}>
+              {b}
+            </Badge>
+          ))}
+        </div>
+      </td>
+      <td className="p-2 text-xs text-muted-foreground">{cuentas.size} cuentas</td>
+      <td className="p-2 text-xs">
+        {singleClienteId ? (
+          <Link href={`/clientes/${encodeURIComponent(singleClienteId)}`} className="text-primary hover:underline">
+            {singleTitular}
+          </Link>
+        ) : (
+          <span className="text-muted-foreground">{clientes.size} clientes</span>
+        )}
+      </td>
+      <td className="p-2">
+        <button type="button" className="font-mono text-sm text-primary hover:underline" onClick={onToggle}>
+          {expanded ? '▼' : '▶'} {first.ticker ?? first.descripcion.slice(0, 24)}
+        </button>
+        <span className="ml-1 text-xs text-muted-foreground">({items.length} posiciones)</span>
+      </td>
+      <td className="p-2">
+        <Badge variant="secondary" className="text-xs">
+          {clases.size === 1 ? first.clase_activo : 'mixto'}
+        </Badge>
+      </td>
+      <td className="p-2 text-right font-mono font-medium">{qty.toLocaleString()}</td>
+      <td className="p-2 text-right font-mono">—</td>
+      <td className="p-2 text-right font-mono">—</td>
+      <td className="p-2 text-right font-mono font-medium">{formatCurrency(usd)}</td>
+      <td className="p-2 text-right text-muted-foreground">
+        {totalUsd > 0 ? formatPct((usd / totalUsd) * 100) : '—'}
+      </td>
+      <td className="p-2">
+        {warnings.length > 0 && (
+          <span className="text-amber-500" title={warnings.join('\n')}>
+            ⚠ {warnings.length}
+          </span>
+        )}
+      </td>
+      <td className="p-2 text-right font-mono">{allOffshore ? '—' : formatArsAmount(ars)}</td>
+      <td className="p-2 text-right font-mono">{formatYtmPct(weighted((m) => m.ytmAnnualEffective))}</td>
+      <td className="p-2 text-right font-mono">{formatNumberOrDash(weighted((m) => m.modifiedDuration))}</td>
+    </tr>
+  );
 }
 
 function formatYtmPct(v: number | null | undefined): string {
