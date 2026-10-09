@@ -14,7 +14,8 @@ export async function middleware(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
   const isDriveCron =
-    pathname === '/api/drive/sync' && req.nextUrl.searchParams.get('mode') === 'cron';
+    (pathname === '/api/drive/sync' || pathname === '/api/aranceles/drive') &&
+    req.nextUrl.searchParams.get('mode') === 'cron';
 
   if (
     pathname.startsWith('/_next') ||

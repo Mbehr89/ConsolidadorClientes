@@ -17,6 +17,7 @@ import {
   Link2,
   LogOut,
   Menu,
+  Receipt,
   Settings2,
   Upload,
   Users,
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { href: '/exposicion', label: 'Exposicion', icon: BarChart3 },
   { href: '/bonos', label: 'Bonos', icon: Landmark },
   { href: '/inconsistencias', label: 'Inconsistencias', icon: AlertTriangle },
+  { href: '/aranceles', label: 'Aranceles', icon: Receipt },
 ] as const;
 
 const ADMIN_ITEMS = [
@@ -170,15 +172,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <p className="mb-2 px-3 text-[10px] font-medium uppercase tracking-wider text-white/35">Principal</p>
 
         <nav className="flex flex-1 flex-col gap-0.5 overflow-auto">
-          {NAV_ITEMS.map((item) => (
-            <Link key={item.href} href={item.href} className={navLinkClass(pathname === item.href)}>
-              <item.icon
-                className={cn('h-4 w-4 shrink-0', pathname === item.href ? 'opacity-100' : 'opacity-70')}
-                aria-hidden
-              />
-              {item.label}
-            </Link>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const active =
+              item.href === '/aranceles' ? pathname.startsWith(item.href) : pathname === item.href;
+            return (
+              <Link key={item.href} href={item.href} className={navLinkClass(active)}>
+                <item.icon className={cn('h-4 w-4 shrink-0', active ? 'opacity-100' : 'opacity-70')} aria-hidden />
+                {item.label}
+              </Link>
+            );
+          })}
 
           {isAdmin && (
             <>
