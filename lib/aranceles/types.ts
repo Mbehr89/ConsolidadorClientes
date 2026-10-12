@@ -1,3 +1,6 @@
+import type { DedupConflict } from '@/lib/aranceles/dedup';
+import type { ArancelesSettings } from '@/lib/aranceles/settings';
+
 export type FeeStatus =
   | 'ok'
   | 'missing'
@@ -60,6 +63,8 @@ export type NormalizedRow = {
   feeStatus: FeeStatus;
   isMinFee: boolean;
   alyc: string | null;
+  /** Columnas propias de un formato que no tienen campo canónico (p. ej. Modo / Aplica de las notas IEB). */
+  details?: Record<string, string>;
 };
 
 export type DetectedFormat = 'gma' | 'generic' | 'ieb';
@@ -73,7 +78,14 @@ export type ArancelImport = {
   segment: string | null;
   period_label: string | null;
   notes: string | null;
+  /** Operaciones nuevas que agregó este archivo. */
   row_count: number;
+  /** Operaciones del archivo que ya estaban en el historial (no se duplicaron). */
+  duplicate_count?: number;
+  /** Líneas repetidas dentro del mismo archivo (mismo número y mismos datos). */
+  repeated_in_file?: number;
+  /** Mismo número de operación ya cargado con datos distintos: no se importaron. */
+  conflicts?: DedupConflict[];
   imported_at: string;
   source: 'manual' | 'drive';
   drive_file_id: string | null;
@@ -97,7 +109,12 @@ export type ArancelCommission = {
   amount: number | null;
   commission: number;
   commission_pct: number | null;
+  /** Moneda de la operación (Bruto / Neto). */
   currency: string;
+  /** Moneda en la que está expresado `commission`; puede diferir de la operación (ver fees.ts). */
+  commission_currency: string;
+  /** Tipo de cambio implícito (ARS por USD) cuando `commission_currency` ≠ `currency`. */
+  commission_fx: number | null;
   /** Estado tal como vino del archivo (antes del análisis de tarifas). */
   imported_status: FeeStatus;
   fee_status: FeeStatus;
@@ -105,6 +122,38 @@ export type ArancelCommission = {
   op_number: string | null;
   segment: string | null;
   is_min_fee: boolean;
+  /** Boletos consecutivos de compra/venta con montos casi iguales (ver trading.ts). */
+  trading_group: TradingGroup | null;
+  /**
+   * Otras importaciones que también traían esta operación. Si se borra `import_id`, la operación
+   * pasa a la siguiente en vez de perderse.
+   */
+  also_in_imports?: string[];
+  /** Columnas propias del formato (p. ej. notas IEB: modo Bruto/Neto, aplica SI/NO, descripción). */
+  details?: Record<string, string>;
+  /**
+   * Arancel a cobrar cargado a mano (SENEBI que la ALYC liquida sin arancel), en la moneda de la operación.
+   * `commission` queda como vino del archivo; los reportes usan este importe (ver segments.ts).
+   */
+  manual_commission?: number | null;
+};
+
+export type TradingGroup = {
+  id: string;
+  /** Primer y último n° de boleto del grupo. */
+  from: string;
+  to: string;
+  /**
+   * Sumas de ventas y compras en valor absoluto. `importe`: Bruto en la moneda de la operación (misma moneda).
+   * `cantidad`: nominales de una misma especie operada en monedas distintas (p. ej. dólar MEP).
+   */
+  sells: number;
+  buys: number;
+  basis?: 'importe' | 'cantidad';
+  /** Especie base cuando `basis` es `cantidad`. */
+  instrument?: string | null;
+  /** `false`: boletos del mismo día que no son seguidos. */
+  consecutive?: boolean;
 };
 
 export type FeeSchedule = {
@@ -140,6 +189,8 @@ export type ArancelesHistory = {
   commissions: ArancelCommission[];
   fee_schedules: FeeSchedule[];
   drive_files: Record<string, DriveFileRecord>;
+  /** Alícuotas de liquidación, productores, arreglos comerciales y cambios de cuenta. */
+  settings?: ArancelesSettings;
 };
 
 export type CommissionFilters = {

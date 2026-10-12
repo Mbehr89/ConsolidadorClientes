@@ -3,8 +3,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConflictList } from '@/components/aranceles/conflict-list';
 import { ErrorBlock, inputClass, readJson } from '@/components/aranceles/shared';
 import { FIELD_LABELS, REQUIRED_FIELDS } from '@/lib/aranceles/aliases';
+import type { DedupConflict } from '@/lib/aranceles/dedup';
 import { formatMoney, formatNumber } from '@/lib/aranceles/format';
 import type { CanonicalField, ColumnMapping, NormalizedRow } from '@/lib/aranceles/types';
 
@@ -27,6 +29,9 @@ type ParseResponse = {
 type CommitResponse = {
   rowCount: number;
   duplicates: number;
+  repeatedInFile: number;
+  conflicts: DedupConflict[];
+  conflictCount: number;
   errorCount: number;
   anomalyCount: number;
   scheduleCount: number;
@@ -127,7 +132,7 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
         }}
       >
         <p className="font-medium">Arrastrá un Excel o hacé clic</p>
-        <p className="text-sm text-muted-foreground">GMA / ESCO, IEB o cualquier planilla con cliente, fecha y arancel</p>
+        <p className="text-sm text-muted-foreground">GMA, IEB o cualquier planilla con cliente, fecha y arancel</p>
         <input
           type="file"
           accept=".xlsx,.xls,.xlsm"
@@ -145,13 +150,23 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
           <p className="text-muted-foreground">
             {success.empty
               ? 'El archivo estaba vacío.'
-              : `Se guardaron ${success.rowCount} filas` +
-                (success.duplicates ? ` (${success.duplicates} ya estaban en el historial)` : '') +
+              : `Se guardaron ${success.rowCount} operaciones nuevas` +
+                (success.duplicates ? ` · ${success.duplicates} ya estaban en el historial (no se duplicaron)` : '') +
+                (success.repeatedInFile ? ` · ${success.repeatedInFile} líneas repetidas dentro del archivo` : '') +
                 (success.errorCount ? ` · ${success.errorCount} omitidas por datos inválidos` : '') +
                 (success.missingFeeCount ? ` · ${success.missingFeeCount} sin arancel informado` : '') +
                 (success.anomalyCount ? ` · ${success.anomalyCount} para revisar en Control` : '') +
                 '.'}
           </p>
+        </div>
+      )}
+      {success && success.conflictCount > 0 && (
+        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/20">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            {success.conflictCount} operaciones no se importaron: su n° ya estaba cargado con otros datos
+            {success.conflictCount > success.conflicts.length ? ` (se muestran ${success.conflicts.length})` : ''}.
+          </p>
+          <ConflictList conflicts={success.conflicts} />
         </div>
       )}
 
@@ -236,7 +251,7 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
               <input
                 className={`${inputClass} w-64`}
                 list="aranceles-alycs"
-                placeholder="Ej. ESCO, IEB, Balanz…"
+                placeholder="Ej. GMA, IEB, Balanz…"
                 value={alycName}
                 onChange={(e) => setAlycName(e.target.value)}
               />

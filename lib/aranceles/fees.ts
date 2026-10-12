@@ -1,4 +1,10 @@
-import { GMA_LARGE_NOTIONAL, GMA_MIN_FEES, isGmaMinFee } from '@/lib/aranceles/mappers/gma';
+import { caucionLeg } from '@/lib/aranceles/categories';
+import {
+  GMA_LARGE_NOTIONAL,
+  GMA_MIN_FEES,
+  gmaCaucionMinFee,
+  isGmaMinFee,
+} from '@/lib/aranceles/mappers/gma';
 import {
   ANOMALY_STATUSES,
   type ArancelCommission,
@@ -9,8 +15,61 @@ import {
 const SCHEDULE_PERCENTS = [0.2, 0.5, 1.0];
 const TRADING_OPS = new Set(['COMPRA', 'VENTA', 'PUBLICO', 'PRIVADO']);
 
+/** Rango plausible de ARS por USD para reconocer un arancel expresado en la otra moneda. */
+const FX_MIN = 100;
+const FX_MAX = 20_000;
+
 function near(a: number, b: number, tol = 0.03) {
   return Math.abs(a - b) <= tol;
+}
+
+/**
+ * ESCO/GMA mezcla monedas en "Arancel (Importe)": en una operación en dólares el arancel
+ * puede venir en pesos (y viceversa). "Arancel (%)" (con todos sus decimales) siempre está
+ * calculado contra el Bruto en la moneda de la operación, así que si |Bruto| × % no da el
+ * importe, el cociente es el tipo de cambio implícito y el importe está en la otra moneda.
+ */
+export function interpretFeeCurrency(
+  c: Pick<ArancelCommission, 'commission' | 'commission_pct' | 'amount' | 'currency'>
+): { commission_currency: string; commission_fx: number | null } {
+  const same = { commission_currency: c.currency, commission_fx: null };
+  const pct = c.commission_pct;
+  if (!(c.commission > 0) || pct == null || !(pct > 0) || c.amount == null || c.amount === 0) return same;
+
+  const impliedSame = (Math.abs(c.amount) * pct) / 100;
+  if (Math.abs(c.commission - impliedSame) <= Math.max(0.011, c.commission * 0.01)) return same;
+
+  const ratio = c.commission / impliedSame;
+  const opIsUsd = c.currency.startsWith('USD');
+  if (opIsUsd && ratio >= FX_MIN && ratio <= FX_MAX) {
+    return { commission_currency: 'ARS', commission_fx: ratio };
+  }
+  if (c.currency === 'ARS' && 1 / ratio >= FX_MIN && 1 / ratio <= FX_MAX) {
+    return { commission_currency: 'USD', commission_fx: 1 / ratio };
+  }
+  return same;
+}
+
+/** Arancel convertido a la moneda de la operación (para comparar contra mínimos y tarifas). */
+export function feeInOperationCurrency(
+  c: Pick<ArancelCommission, 'commission' | 'currency' | 'commission_currency' | 'commission_fx'>
+): number {
+  if (c.commission_currency === c.currency || !c.commission_fx) return c.commission;
+  return c.commission_currency === 'ARS' ? c.commission / c.commission_fx : c.commission * c.commission_fx;
+}
+
+/** Sólo las importaciones GMA/ESCO traen el % confiable para detectar la moneda del arancel. */
+export function annotateFeeCurrencies(
+  commissions: readonly ArancelCommission[],
+  gmaImportIds: ReadonlySet<string>
+): ArancelCommission[] {
+  return commissions.map((c) => {
+    const next = gmaImportIds.has(c.import_id)
+      ? interpretFeeCurrency(c)
+      : { commission_currency: c.currency, commission_fx: null };
+    if (next.commission_currency === c.commission_currency && next.commission_fx === c.commission_fx) return c;
+    return { ...c, ...next };
+  });
 }
 
 function scheduleKey(alyc: string, clientKey: string, currency: string) {
@@ -53,13 +112,14 @@ export function inferFeeSchedules(
 
   for (const c of commissions) {
     if (c.imported_status === 'skipped' || c.imported_status === 'missing') continue;
+    // Las cauciones tienen su propio mínimo y el arancel en otra moneda no es comparable.
+    if (caucionLeg(c.operation)) continue;
+    if ((c.commission_currency ?? c.currency) !== c.currency) continue;
     const p = c.commission_pct;
-    const cur = c.currency === 'USD_C' ? 'USD' : c.currency;
 
     if (c.commission > 0 && c.commission < 1000) {
       const looksMin =
         isGmaMinFee(c.currency, c.commission) ||
-        isGmaMinFee(cur, c.commission) ||
         (p != null && p < 0.05 && c.commission <= 50);
       const looksFixedBlankPct = p == null || Math.abs(p) < 0.0001;
       if (looksMin || looksFixedBlankPct) {
@@ -145,6 +205,19 @@ export function recomputeAnomalies(
     }
 
     const isGma = gmaImportIds.has(c.import_id);
+    const leg = isGma ? caucionLeg(c.operation) : null;
+    if (leg === 'contado') {
+      return { ...c, fee_status: 'skipped' as FeeStatus, expected_commission: null };
+    }
+    if (leg === 'futuro') {
+      const min = gmaCaucionMinFee(c.currency);
+      let status: FeeStatus = 'ok';
+      if (c.imported_status === 'missing') status = 'missing';
+      else if (c.commission === 0) status = 'zero';
+      else if (feeInOperationCurrency(c) + 0.005 < min) status = 'below_expected';
+      return { ...c, fee_status: status, expected_commission: min };
+    }
+
     const k = scheduleKey(c.alyc, c.client_key, c.currency);
     const expectedFixed = fixedBy.get(k) ?? (isGma ? GMA_MIN_FEES[c.currency] : undefined) ?? null;
     const expectedPct = pctBy.get(k) ?? null;
@@ -160,7 +233,8 @@ export function recomputeAnomalies(
     } else if (c.commission === 0) {
       status = 'zero';
     } else {
-      const minFee = isGma && isGmaMinFee(c.currency, c.commission);
+      const fee = feeInOperationCurrency(c);
+      const minFee = isGma && isGmaMinFee(c.commission_currency, c.commission);
       if (minFee && absGross != null && absGross > GMA_LARGE_NOTIONAL && isTrading) {
         status = 'min_on_large';
         expected =
@@ -169,7 +243,7 @@ export function recomputeAnomalies(
         expectedFixed != null &&
         expectedFixed > 0 &&
         (c.commission_pct == null || Math.abs(c.commission_pct) < 0.05) &&
-        c.commission + 0.005 < expectedFixed
+        fee + 0.005 < expectedFixed
       ) {
         status = 'below_expected';
         expected = expectedFixed;

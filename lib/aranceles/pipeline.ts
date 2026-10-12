@@ -7,6 +7,9 @@ import {
   isEmptyWorkbook,
   isIebAcdiHeaders,
   isIebArancelesHeaders,
+  isIebSegmentHeaders,
+  iebDetailColumns,
+  iebSegmentMapping,
   normalizeIebCurrency,
   resolveArancelesSegment,
   type IebSegment,
@@ -81,6 +84,7 @@ export function parseImportBuffer(
   if (
     isIebArancelesHeaders(parsed.headers) ||
     isIebAcdiHeaders(parsed.headers) ||
+    isIebSegmentHeaders(parsed.headers) ||
     opts?.forceSegment
   ) {
     const detected = detectIebSegment(
@@ -102,7 +106,13 @@ export function parseImportBuffer(
     }
 
     let mapping: ColumnMapping;
-    if (isIebAcdiHeaders(parsed.headers) || segment === "acdi") {
+    if (
+      segment === "notas" ||
+      segment === "licitaciones" ||
+      segment === "diferencias"
+    ) {
+      mapping = iebSegmentMapping(parsed.headers, segment);
+    } else if (isIebAcdiHeaders(parsed.headers) || segment === "acdi") {
       mapping = iebAcdiMapping(parsed.headers);
     } else if (isIebArancelesHeaders(parsed.headers)) {
       mapping = iebArancelesMapping(parsed.headers);
@@ -119,7 +129,11 @@ export function parseImportBuffer(
             ? "PRIVADO"
             : segment.startsWith("aranceles")
               ? "ARANCEL"
-              : segment.toUpperCase();
+              : segment === "licitaciones"
+                ? "LICITACION"
+                : segment === "notas"
+                  ? "NOTA"
+                  : segment.toUpperCase();
 
     return {
       parsed,
@@ -133,6 +147,7 @@ export function parseImportBuffer(
         currencyNormalizer: normalizeIebCurrency,
         fallbackDate: opts?.fallbackDate ?? null,
         operationFallback: opFallback,
+        detailColumns: iebDetailColumns(parsed.headers, segment),
       },
       empty: false,
       suggestedAlycName: "IEB",

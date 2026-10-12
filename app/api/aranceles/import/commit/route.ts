@@ -68,6 +68,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       ...result,
+      conflicts: result.conflicts.slice(0, 50),
+      conflictCount: result.conflicts.length,
       skipped: prepared.skipped,
       errorCount: prepared.errors.length,
       errors: prepared.errors.slice(0, 20),

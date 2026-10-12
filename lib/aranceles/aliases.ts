@@ -128,6 +128,11 @@ const ALIASES: Record<Exclude<CanonicalField, "ignore">, string[]> = {
     "divisa",
   ],
   op_number: [
+    "id",
+    "boleto",
+    "nro boleto",
+    "numero de boleto",
+    "número de boleto",
     "numero de operacion",
     "número de operación",
     "nro operacion",

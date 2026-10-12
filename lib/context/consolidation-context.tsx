@@ -15,6 +15,7 @@ import type {
   GruposStore,
 } from '@/lib/config-store/types';
 import { applyGrupoIdsToPositions } from '@/lib/analysis/grupos';
+import { buildGrupoAsesorByCuenta } from '@/lib/grupo-asesor';
 import { feedGlossary } from '@/lib/analysis/feed-glossary';
 import { mapTickersMetadataForParser } from '@/lib/analysis/ticker-meta-parser';
 import { aliasStoreToRecord } from '@/lib/analysis/alias-utils';
@@ -43,6 +44,8 @@ export interface ConsolidationState {
   grupos: GruposStore;
   /** Advisor por `cliente_id` (mapping cuenta→advisor + store persistido tras parse). */
   advisorsByCliente: Record<string, string>;
+  /** Grupo asesor por `${broker}::${cuenta}` (Mapping cuentas). */
+  grupoAsesorByCuenta: Record<string, string>;
   fxManual: number | null;
   /** FX ARS/USD sugerido automáticamente a partir de los archivos cargados. */
   fxSuggested: number | null;
@@ -63,6 +66,8 @@ interface ConsolidationContextValue {
   parseAll: (aliasesOverride?: AliasStore) => Promise<void>;
   /** Recarga grupos desde el servidor y re-asigna `grupo_id` sin re-parsear Excel. */
   refreshGruposAssignment: () => Promise<void>;
+  /** Recarga el grupo asesor por cuenta desde el mapping guardado, sin re-parsear Excel. */
+  refreshGrupoAsesor: () => Promise<void>;
   reset: () => void;
 }
 
@@ -71,6 +76,7 @@ const INITIAL_STATE: ConsolidationState = {
   allPositions: [],
   grupos: [],
   advisorsByCliente: {},
+  grupoAsesorByCuenta: {},
   fxManual: null,
   fxSuggested: null,
   fechaIeb: null,
@@ -390,6 +396,7 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
       allPositions,
       grupos: gruposStore,
       advisorsByCliente,
+      grupoAsesorByCuenta: buildGrupoAsesorByCuenta(mappingStore),
       hasParsed: allPositions.length > 0,
       isProcessing: false,
       aliasSuggestionsCount,
@@ -451,6 +458,17 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshGrupoAsesor = useCallback(async () => {
+    try {
+      const res = await fetch('/api/config/mapping-cuentas');
+      if (!res.ok) return;
+      const store = (await res.json()) as MappingCuentasStore;
+      setState((prev) => ({ ...prev, grupoAsesorByCuenta: buildGrupoAsesorByCuenta(store) }));
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   const reset = useCallback(() => {
     setState(INITIAL_STATE);
   }, []);
@@ -466,6 +484,7 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
         setFechaIeb,
         parseAll,
         refreshGruposAssignment,
+        refreshGrupoAsesor,
         reset,
       }}
     >

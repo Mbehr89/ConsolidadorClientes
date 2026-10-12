@@ -41,7 +41,8 @@ export function parseDateValue(
 ): string | null {
   if (raw == null || raw === "") return null;
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-    return raw.toISOString().slice(0, 10);
+    // SheetJS arma las fechas en hora local: toISOString() podría correr el día.
+    return buildIso(raw.getFullYear(), raw.getMonth() + 1, raw.getDate());
   }
 
   if (typeof raw === "number") {
@@ -135,6 +136,8 @@ export type NormalizeOptions = {
   fallbackDate?: string | null;
   /** Force fee_status ok rows' operation label prefix (segment tag). */
   operationFallback?: string | null;
+  /** Columnas extra a conservar en `details`: encabezado → clave. */
+  detailColumns?: Record<string, string>;
 };
 
 export type NormalizeResult = {
@@ -155,6 +158,7 @@ export function normalizeRows(
     expectedMissingOps = GMA_EXPECTED_MISSING_OPS,
     fallbackDate = null,
     operationFallback = null,
+    detailColumns,
   } = options;
 
   const out: NormalizedRow[] = [];
@@ -240,6 +244,15 @@ export function normalizeRows(
     const isMinFee =
       feeStatus === "ok" && isGmaMinFee(currency, commission);
 
+    let details: Record<string, string> | undefined;
+    if (detailColumns) {
+      for (const [header, key] of Object.entries(detailColumns)) {
+        const v = row[header];
+        if (v == null || String(v).trim() === "") continue;
+        (details ??= {})[key] = String(v).trim();
+      }
+    }
+
     out.push({
       client,
       clientExternalId:
@@ -273,6 +286,7 @@ export function normalizeRows(
         alycRaw != null && String(alycRaw).trim()
           ? String(alycRaw).trim()
           : null,
+      ...(details ? { details } : {}),
     });
   });
 
@@ -282,7 +296,7 @@ export function normalizeRows(
 function defaultCurrency(raw: string): string {
   const s = raw.trim().toUpperCase();
   if (!s || s === "$" || s === "PESOS" || s === "PESO") return "ARS";
-  if (s === "USD C" || s === "USDC") return "USD_C";
+  if (s === "USD C" || s === "USDC") return "USD_EXT";
   if (s === "U$S" || s === "U$D" || s === "DOLAR" || s === "DÓLAR" || s.includes("USD"))
     return "USD";
   return s || "ARS";

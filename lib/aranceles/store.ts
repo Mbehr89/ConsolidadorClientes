@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { summarizeBackup, type BackupSummary } from '@/lib/aranceles/backup';
+import { findDuplicateGroups, findSharedIdGroups } from '@/lib/aranceles/dedup';
 import { coerceHistory, emptyHistory } from '@/lib/aranceles/history';
 import type { ArancelesHistory } from '@/lib/aranceles/types';
 import {
@@ -16,6 +18,7 @@ import {
 
 const DEFAULT_HISTORY_FILENAME = 'aranceles-historial.json';
 const LOCAL_HISTORY_FILE = path.join(process.cwd(), '.local-store', DEFAULT_HISTORY_FILENAME);
+const LOCAL_BACKUP_DIR = path.join(process.cwd(), '.local-store', 'backups-aranceles');
 const JSON_MIME = 'application/json';
 
 export type ArancelesDriveConfig = {
@@ -158,6 +161,89 @@ export async function loadHistory(): Promise<ArancelesHistory> {
   return (await loadFromDrive(cfg.config, token)).history;
 }
 
+export type BackupResult = BackupSummary & {
+  content: string;
+  storedIn: 'drive' | 'local' | null;
+  storeError: string | null;
+};
+
+async function uniqueLocalPath(dir: string, filename: string): Promise<string> {
+  const ext = path.extname(filename);
+  const base = filename.slice(0, -ext.length);
+  for (let n = 1; ; n++) {
+    const candidate = path.join(dir, n === 1 ? filename : `${base} (${n})${ext}`);
+    try {
+      await fs.access(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+}
+
+/**
+ * Copia del historial completo con nombre "Backup aranceles - <última operación> - <N> operaciones.json".
+ * Se serializa con las escrituras para que la copia nunca quede a mitad de una importación.
+ */
+export async function createHistoryBackup(): Promise<BackupResult> {
+  const run = async (): Promise<BackupResult> => {
+    const cfg = getArancelesDriveConfig();
+    if (!cfg.ok) {
+      const { history } = await loadFromLocal();
+      const summary = summarizeBackup(history);
+      const content = JSON.stringify(history, null, 2);
+      await fs.mkdir(LOCAL_BACKUP_DIR, { recursive: true });
+      const target = await uniqueLocalPath(LOCAL_BACKUP_DIR, summary.filename);
+      await fs.writeFile(target, content, 'utf8');
+      return { ...summary, filename: path.basename(target), content, storedIn: 'local', storeError: null };
+    }
+
+    const token = await getArancelesDriveToken(cfg.config);
+    g.__arancelesCache = undefined;
+    const { history } = await loadFromDrive(cfg.config, token);
+    const summary = summarizeBackup(history);
+    const content = JSON.stringify(history);
+    try {
+      await createFileInFolder(cfg.config.folderId, summary.filename, content, JSON_MIME, token);
+      return { ...summary, content, storedIn: 'drive', storeError: null };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const storeError = /storageQuotaExceeded|do not have storage quota/i.test(detail)
+        ? 'Google no deja que la cuenta de servicio cree archivos nuevos en una carpeta de "Mi unidad". ' +
+          'El backup se descargó a tu PC: subilo a la carpeta de Drive (o mové la carpeta a una unidad compartida ' +
+          'para que se guarde solo).'
+        : `No se pudo guardar el backup en Drive (${detail.slice(0, 200)}). Se descargó a tu PC.`;
+      return { ...summary, content, storedIn: null, storeError };
+    }
+  };
+
+  const prev = g.__arancelesWriteChain ?? Promise.resolve();
+  const next = prev.then(run, run);
+  g.__arancelesWriteChain = next.catch(() => undefined);
+  return next;
+}
+
+/** Ningún cambio puede dejar operaciones repetidas: si aparecen, se aborta sin guardar. */
+function assertNoNewDuplicates(before: ArancelesHistory, after: ArancelesHistory) {
+  const sample = (groups: { op_number: string | null }[]) =>
+    groups
+      .slice(0, 5)
+      .map((g) => g.op_number)
+      .join(', ');
+  const next = findDuplicateGroups(after.commissions);
+  if (next.length > findDuplicateGroups(before.commissions).length) {
+    throw new Error(
+      `Se detectaron operaciones duplicadas (n° ${sample(next)}). No se guardó ningún cambio en el historial.`
+    );
+  }
+  const shared = findSharedIdGroups(after.commissions);
+  if (shared.length > findSharedIdGroups(before.commissions).length) {
+    throw new Error(
+      `Un mismo n° de operación quedaría asignado a operaciones distintas (n° ${sample(shared)}). ` +
+        'No se guardó ningún cambio en el historial.'
+    );
+  }
+}
+
 /**
  * Lee el historial, aplica `fn` y lo guarda. Las escrituras se serializan por instancia;
  * si el archivo cambió en Drive entre la lectura y la escritura, se relee y se reaplica una vez.
@@ -170,6 +256,7 @@ export async function mutateHistory<R>(
     if (!cfg.ok) {
       const { history } = await loadFromLocal();
       const out = await fn(history);
+      assertNoNewDuplicates(history, out.history);
       await saveToLocal({ ...out.history, updated_at: new Date().toISOString() });
       return out.result;
     }
@@ -178,6 +265,7 @@ export async function mutateHistory<R>(
     for (let attempt = 0; attempt < 2; attempt++) {
       const loaded = await loadFromDrive(cfg.config, token);
       const out = await fn(loaded.history);
+      assertNoNewDuplicates(loaded.history, out.history);
       if (loaded.fileId && attempt === 0) {
         const meta = await getDriveFileMeta(loaded.fileId, token);
         if ((meta.modifiedTime ?? null) !== loaded.modifiedTime) {

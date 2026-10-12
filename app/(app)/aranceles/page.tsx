@@ -5,19 +5,34 @@ import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { OperationsTable } from '@/components/aranceles/operations-table';
+import {
+  EMPTY_SEGMENT_FILTERS,
+  MonthRangeSelects,
+  SegmentFilterSelects,
+  type SegmentFilterValues,
+} from '@/components/aranceles/report-filters';
 import {
   EmptyBlock,
   ErrorBlock,
   LoadingBlock,
   Stat,
-  StatusBadge,
+  TotalsStack,
   inputClass,
   readJson,
 } from '@/components/aranceles/shared';
-import { formatDate, formatMoney, formatMonth, formatNumber, formatTotals } from '@/lib/aranceles/format';
+import { formatDate, formatMonth, formatNumber, formatTotals } from '@/lib/aranceles/format';
+import { cn } from '@/lib/utils';
 import type { ArancelesSummary, BreakdownRow } from '@/lib/aranceles/history';
+import {
+  SEGMENT_DIMENSIONS,
+  SEGMENT_LABEL,
+  type SegmentDimension,
+  type SegmentOptions,
+  type SegmentedCommission,
+} from '@/lib/aranceles/segments';
 import type { ArancelesStorageInfo } from '@/lib/aranceles/store';
-import { FEE_STATUS_LABEL, type ArancelCommission, type ArancelImport } from '@/lib/aranceles/types';
+import { FEE_STATUS_LABEL, type ArancelImport } from '@/lib/aranceles/types';
 
 type SummaryResponse = {
   storage: ArancelesStorageInfo;
@@ -26,23 +41,72 @@ type SummaryResponse = {
   importCount: number;
   alycs: { name: string; rows: number }[];
   clients: { key: string; name: string }[];
+  months: string[];
+  segmentOptions: SegmentOptions;
   summary: ArancelesSummary;
+  segments: Record<SegmentDimension, BreakdownRow[]>;
   total: number;
-  rows: ArancelCommission[];
+  rows: SegmentedCommission[];
+  measure: Measure;
+  withoutNet: { rows: number; totals: Record<string, number> } | null;
 };
 
-type Filters = { alyc: string; client: string; from: string; to: string; q: string; status: string };
-const EMPTY_FILTERS: Filters = { alyc: '', client: '', from: '', to: '', q: '', status: '' };
+type Measure = 'gross' | 'net';
 
-function toQuery(f: Filters): string {
+type Filters = SegmentFilterValues & {
+  alyc: string;
+  client: string;
+  from: string;
+  to: string;
+  q: string;
+  status: string;
+};
+const EMPTY_FILTERS: Filters = {
+  ...EMPTY_SEGMENT_FILTERS,
+  alyc: '',
+  client: '',
+  from: '',
+  to: '',
+  q: '',
+  status: '',
+};
+
+function toQuery(f: Filters, measure: Measure): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) if (v.trim()) p.set(k, v.trim());
   p.set('limit', '200');
+  if (measure === 'net') p.set('measure', 'net');
   return p.toString();
+}
+
+function MeasureToggle({ value, onChange }: { value: Measure; onChange: (m: Measure) => void }) {
+  const options: { id: Measure; label: string }[] = [
+    { id: 'gross', label: 'Bruto' },
+    { id: 'net', label: 'Neto a pagar' },
+  ];
+  return (
+    <div className="inline-flex rounded-md border border-input p-0.5" role="group" aria-label="Ver bruto o neto">
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          aria-pressed={value === o.id}
+          onClick={() => onChange(o.id)}
+          className={cn(
+            'rounded px-3 py-1 text-sm transition-colors',
+            value === o.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export default function ArancelesResumenPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [measure, setMeasure] = useState<Measure>('gross');
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +115,7 @@ export default function ArancelesResumenPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/aranceles/summary?${toQuery(filters)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/aranceles/summary?${toQuery(filters, measure)}`, { cache: 'no-store' });
       const json = await readJson<SummaryResponse>(res);
       if (!res.ok) throw new Error(json.error ?? 'Error al cargar el historial');
       setData(json);
@@ -60,7 +124,7 @@ export default function ArancelesResumenPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, measure]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 250);
@@ -73,7 +137,10 @@ export default function ArancelesResumenPage() {
 
   return (
     <div className="space-y-6">
-      {data && <StorageNote storage={data.storage} updatedAt={data.updatedAt} lastImport={data.lastImport} />}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {data ? <StorageNote storage={data.storage} updatedAt={data.updatedAt} lastImport={data.lastImport} /> : <span />}
+        <MeasureToggle value={measure} onChange={setMeasure} />
+      </div>
 
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -99,14 +166,7 @@ export default function ArancelesResumenPage() {
               ))}
             </select>
           </label>
-          <label className="space-y-1 text-xs text-muted-foreground">
-            Desde
-            <input type="date" className={inputClass} value={filters.from} onChange={(e) => set({ from: e.target.value })} />
-          </label>
-          <label className="space-y-1 text-xs text-muted-foreground">
-            Hasta
-            <input type="date" className={inputClass} value={filters.to} onChange={(e) => set({ to: e.target.value })} />
-          </label>
+          <MonthRangeSelects from={filters.from} to={filters.to} months={data?.months} onChange={set} />
           <label className="space-y-1 text-xs text-muted-foreground">
             Estado
             <select className={inputClass} value={filters.status} onChange={(e) => set({ status: e.target.value })}>
@@ -123,11 +183,12 @@ export default function ArancelesResumenPage() {
             Buscar
             <input
               className={inputClass}
-              placeholder="Cliente, instrumento, cuenta…"
+              placeholder="Cliente, instrumento, operación, boleto…"
               value={filters.q}
               onChange={(e) => set({ q: e.target.value })}
             />
           </label>
+          <SegmentFilterSelects value={filters} onChange={set} options={data?.segmentOptions} />
           {hasFilters && (
             <div className="sm:col-span-2 lg:col-span-6">
               <Button size="sm" variant="ghost" onClick={() => setFilters(EMPTY_FILTERS)}>
@@ -156,7 +217,10 @@ export default function ArancelesResumenPage() {
       {data && !isEmpty && (
         <div className={loading ? 'space-y-6 opacity-60 transition-opacity' : 'space-y-6'}>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <Stat label="Aranceles" value={formatTotals(data.summary.totals)} />
+            <Stat
+              label={data.measure === 'net' ? 'Neto a pagar' : 'Aranceles brutos'}
+              value={<TotalsStack totals={data.summary.totals} align="start" className="text-base" />}
+            />
             <Stat label="Operaciones" value={formatNumber(data.summary.rowCount)} />
             <Stat label="Clientes" value={formatNumber(data.summary.clientCount)} />
             <Stat label="ALYCs" value={formatNumber(data.summary.alycCount)} />
@@ -166,6 +230,26 @@ export default function ArancelesResumenPage() {
               hint={data.summary.anomalyCount > 0 ? 'Sin arancel o por debajo de la tarifa' : undefined}
             />
           </div>
+          {data.measure === 'net' && (
+            <p className="text-sm text-muted-foreground">
+              Todos los importes son el neto a pagar de cada operación, con las alícuotas de{' '}
+              <Link href="/aranceles/configuracion" className="font-medium text-primary hover:underline">
+                Configuración
+              </Link>{' '}
+              vigentes a su fecha (detalle por tipo en{' '}
+              <Link href="/aranceles/neto" className="font-medium text-primary hover:underline">
+                Neto
+              </Link>
+              ).
+              {data.withoutNet && data.withoutNet.rows > 0 && (
+                <span className="text-amber-700 dark:text-amber-400">
+                  {' '}
+                  {formatNumber(data.withoutNet.rows)} operaciones sin regla de neto quedan afuera (
+                  {formatTotals(data.withoutNet.totals)} de bruto).
+                </span>
+              )}
+            </p>
+          )}
           {data.summary.anomalyCount > 0 && (
             <p className="text-sm text-muted-foreground">
               Hay operaciones sin arancel o por debajo de la tarifa sugerida.{' '}
@@ -179,7 +263,17 @@ export default function ArancelesResumenPage() {
             <Breakdown title="Por ALYC" rows={data.summary.byAlyc} />
             <Breakdown title="Por mes" rows={data.summary.byMonth} labelFormat={formatMonth} />
             <Breakdown title="Top clientes" rows={data.summary.byClient.slice(0, 15)} />
+            {SEGMENT_DIMENSIONS.map((d) => (
+              <Breakdown key={d} title={`Por ${SEGMENT_LABEL[d].toLowerCase()}`} rows={data.segments[d]} />
+            ))}
           </div>
+          <p className="-mt-2 text-xs text-muted-foreground">
+            Manager, advisor y grupo asesor salen de{' '}
+            <Link href="/admin/mapping-cuentas" className="text-primary hover:underline">
+              Admin → Mapping cuentas
+            </Link>{' '}
+            según la cuenta comitente de cada operación.
+          </p>
 
           <Card>
             <CardHeader>
@@ -188,50 +282,7 @@ export default function ArancelesResumenPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="max-h-[560px] overflow-auto">
-                <table className="w-full min-w-[900px] text-sm">
-                  <thead className="sticky top-0 border-b bg-card">
-                    <tr className="text-xs uppercase text-muted-foreground">
-                      <th className="p-2 text-left font-medium">Fecha</th>
-                      <th className="p-2 text-left font-medium">Cliente</th>
-                      <th className="p-2 text-left font-medium">ALYC</th>
-                      <th className="p-2 text-left font-medium">Operación</th>
-                      <th className="p-2 text-left font-medium">Instrumento</th>
-                      <th className="p-2 text-right font-medium">Bruto</th>
-                      <th className="p-2 text-right font-medium">Arancel</th>
-                      <th className="p-2 text-left font-medium">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.rows.map((r) => (
-                      <tr key={r.id} className="border-b border-border/50 hover:bg-muted/40">
-                        <td className="whitespace-nowrap p-2">{formatDate(r.trade_date)}</td>
-                        <td className="p-2">
-                          <div>{r.client}</div>
-                          {r.client_external_id && (
-                            <div className="text-xs text-muted-foreground">Cta. {r.client_external_id}</div>
-                          )}
-                        </td>
-                        <td className="p-2">{r.alyc}</td>
-                        <td className="p-2 text-xs">{r.operation ?? '—'}</td>
-                        <td className="p-2 font-mono text-xs text-muted-foreground">{r.instrument ?? '—'}</td>
-                        <td className="p-2 text-right tabular-nums text-muted-foreground">
-                          {r.amount != null ? formatNumber(r.amount) : '—'}
-                        </td>
-                        <td className="p-2 text-right font-medium tabular-nums">
-                          {formatMoney(r.commission, r.currency)}
-                          {r.commission_pct != null && (
-                            <div className="text-xs font-normal text-muted-foreground">{formatNumber(r.commission_pct)}%</div>
-                          )}
-                        </td>
-                        <td className="p-2">
-                          <StatusBadge status={r.fee_status} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <OperationsTable rows={data.rows} feeLabel={data.measure === 'net' ? 'Neto a pagar' : 'Arancel bruto'} />
             </CardContent>
           </Card>
         </div>
@@ -258,14 +309,16 @@ function Breakdown({
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">Sin datos en este corte.</p>
         ) : (
-          <ul className="max-h-72 divide-y divide-border/70 overflow-auto">
+          <ul className="max-h-80 divide-y divide-border/70 overflow-auto pr-1">
             {rows.map((r) => (
-              <li key={r.key} className="flex items-baseline justify-between gap-3 py-2 text-sm">
-                <span className="min-w-0 truncate">
-                  {labelFormat ? labelFormat(r.label) : r.label}
-                  <span className="ml-2 text-xs text-muted-foreground">{r.rows} op.</span>
-                </span>
-                <span className="shrink-0 text-right font-medium tabular-nums">{formatTotals(r.totals)}</span>
+              <li key={r.key} className="flex items-start justify-between gap-4 py-2.5 text-sm">
+                <div className="min-w-0">
+                  <div className="truncate font-medium capitalize" title={r.label}>
+                    {labelFormat ? labelFormat(r.label) : r.label}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{formatNumber(r.rows)} op.</div>
+                </div>
+                <TotalsStack totals={r.totals} className="shrink-0" />
               </li>
             ))}
           </ul>

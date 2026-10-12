@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyBlock, ErrorBlock, LoadingBlock, inputClass, readJson } from '@/components/aranceles/shared';
 import { formatMoney, formatNumber } from '@/lib/aranceles/format';
+import { KNOWN_FEE_RULES } from '@/lib/aranceles/rules';
 import type { FeeSchedule } from '@/lib/aranceles/types';
 
 export default function ArancelesTarifasPage() {
@@ -71,6 +72,49 @@ export default function ArancelesTarifasPage() {
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg">Mínimos y reglas conocidas</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Reglas fijas por ALYC que se aplican en Control, además de las tarifas sugeridas por cliente.
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead className="border-b">
+                <tr className="text-xs uppercase text-muted-foreground">
+                  <th className="p-2 pl-6 text-left font-medium">ALYC</th>
+                  <th className="p-2 text-left font-medium">Operación</th>
+                  <th className="p-2 text-left font-medium">Regla</th>
+                  <th className="p-2 text-right font-medium">Valor</th>
+                  <th className="p-2 text-left font-medium">Origen</th>
+                  <th className="p-2 pr-6 text-left font-medium">Detalle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {KNOWN_FEE_RULES.map((r) => (
+                  <tr key={r.id} className="border-b border-border/50 last:border-0">
+                    <td className="p-2 pl-6 font-medium">{r.alyc}</td>
+                    <td className="p-2">{r.operation}</td>
+                    <td className="p-2">Mínimo</td>
+                    <td className="p-2 text-right font-medium tabular-nums">{formatMoney(r.amount, r.currency)}</td>
+                    <td className="p-2">
+                      {r.status === 'confirmed' ? (
+                        <Badge variant="success">Confirmado</Badge>
+                      ) : (
+                        <Badge variant="warning">Observado, a confirmar</Badge>
+                      )}
+                    </td>
+                    <td className="p-2 pr-6 text-xs text-muted-foreground">{r.notes}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       {loading && <LoadingBlock label="Cargando tarifas…" />}
       {error && <ErrorBlock message={error} onRetry={() => void load()} />}

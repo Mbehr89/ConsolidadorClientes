@@ -10,7 +10,11 @@ export type ParsedSheet = {
 
 function cellToString(value: unknown): string {
   if (value == null) return "";
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) {
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${value.getFullYear()}-${m}-${d}`;
+  }
   if (typeof value === "number") {
     // Excel serial date heuristic for date-like numbers is handled later
     return String(value);
@@ -32,7 +36,6 @@ export function parseExcelBuffer(buffer: Uint8Array | ArrayBuffer): ParsedSheet 
   const workbook = XLSX.read(buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer, {
     type: "array",
     cellDates: true,
-    raw: false,
   });
 
   const sheetName = workbook.SheetNames[0];
@@ -57,7 +60,8 @@ export function parseExcelBuffer(buffer: Uint8Array | ArrayBuffer): ParsedSheet 
       header: 1,
       defval: "",
       blankrows: false,
-      raw: false,
+      // Valor real de la celda: el texto formateado recorta decimales (ej. Arancel (%) 0,00410959 → "0.00").
+      raw: true,
     },
   );
 

@@ -2,6 +2,12 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useConsolidation } from '@/lib/context/consolidation-context';
+import {
+  GRUPOS_ASESOR,
+  SIN_GRUPO_ASESOR,
+  grupoAsesorDePosicion,
+  matchesGrupoAsesor,
+} from '@/lib/grupo-asesor';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatCompact, formatCurrency } from '@/lib/utils';
@@ -126,6 +132,7 @@ export default function ActivosPage() {
   const [filterForma, setFilterForma] = useState('all');
   const [filterBroker, setFilterBroker] = useState('all');
   const [filterAdvisor, setFilterAdvisor] = useState('all');
+  const [filterGrupoAsesor, setFilterGrupoAsesor] = useState('all');
   const [sortField, setSortField] = useState<'total_usd' | 'ticker' | 'titulares' | 'tir'>('total_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [expandedAggKey, setExpandedAggKey] = useState<string | null>(null);
@@ -152,14 +159,13 @@ export default function ActivosPage() {
   );
 
   const positionsForActivos = useMemo(() => {
-    const base =
-      filterAdvisor === 'all'
-        ? state.allPositions
-        : state.allPositions.filter(
-            (p) => (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor
-          );
-    return base.filter((p) => !isCashInstrument(p));
-  }, [state.allPositions, state.advisorsByCliente, filterAdvisor]);
+    return state.allPositions.filter(
+      (p) =>
+        !isCashInstrument(p) &&
+        (filterAdvisor === 'all' || (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor) &&
+        matchesGrupoAsesor(grupoAsesorDePosicion(state.grupoAsesorByCuenta, p), filterGrupoAsesor)
+    );
+  }, [state.allPositions, state.advisorsByCliente, state.grupoAsesorByCuenta, filterAdvisor, filterGrupoAsesor]);
 
   const activos = useMemo(() => buildActivoSummaries(positionsForActivos), [positionsForActivos]);
 
@@ -277,7 +283,7 @@ export default function ActivosPage() {
   }
 
   return (
-    <div className="page-shell">
+    <div className="page-shell max-w-[1600px]">
       <div>
         <h2 className="page-title">Activos ({filtered.length} instrumentos)</h2>
         <p className="page-subtitle">
@@ -359,10 +365,24 @@ export default function ActivosPage() {
             </option>
           ))}
         </select>
+        <select
+          value={filterGrupoAsesor}
+          onChange={(e) => setFilterGrupoAsesor(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="all">Todos los grupos asesor</option>
+          {GRUPOS_ASESOR.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+          <option value={SIN_GRUPO_ASESOR}>Sin grupo asesor</option>
+        </select>
         {(filterClase !== 'all' ||
           filterForma !== 'all' ||
           filterBroker !== 'all' ||
           filterAdvisor !== 'all' ||
+          filterGrupoAsesor !== 'all' ||
           search) && (
           <button
             onClick={() => {
@@ -371,6 +391,7 @@ export default function ActivosPage() {
               setFilterForma('all');
               setFilterBroker('all');
               setFilterAdvisor('all');
+              setFilterGrupoAsesor('all');
             }}
             className="text-sm text-primary hover:underline"
           >
@@ -386,35 +407,35 @@ export default function ActivosPage() {
               <thead className="sticky top-0 border-b bg-card">
                 <tr>
                   <th
-                    className="cursor-pointer p-3 text-left text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    className="w-[110px] cursor-pointer whitespace-nowrap px-2.5 py-3 text-left text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
                     onClick={() => toggleSort('ticker')}
                   >
                     Ticker {sortField === 'ticker' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Descripción</th>
-                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Clase</th>
-                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Forma Legal</th>
+                  <th className="whitespace-nowrap px-2.5 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Descripción</th>
+                  <th className="whitespace-nowrap px-2.5 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Clase</th>
+                  <th className="whitespace-nowrap px-2.5 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Forma Legal</th>
                   <th
-                    className="cursor-pointer whitespace-nowrap p-3 text-right text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    className="cursor-pointer whitespace-nowrap px-2.5 py-3 text-right text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
                     onClick={() => toggleSort('tir')}
                   >
                     TIR {sortField === 'tir' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="p-3 text-left text-xs font-medium uppercase text-muted-foreground">Brokers</th>
+                  <th className="whitespace-nowrap px-2.5 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Brokers</th>
                   <th
-                    className="cursor-pointer p-3 text-center text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    className="cursor-pointer whitespace-nowrap px-2.5 py-3 text-center text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
                     onClick={() => toggleSort('titulares')}
                   >
                     Titulares {sortField === 'titulares' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="p-3 text-right text-xs font-medium uppercase text-muted-foreground">Cant. Total</th>
+                  <th className="whitespace-nowrap px-2.5 py-3 text-right text-xs font-medium uppercase text-muted-foreground">Cant. Total</th>
                   <th
-                    className="cursor-pointer p-3 text-right text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
+                    className="cursor-pointer whitespace-nowrap px-2.5 py-3 text-right text-xs font-medium uppercase text-muted-foreground hover:text-foreground"
                     onClick={() => toggleSort('total_usd')}
                   >
                     Valor USD {sortField === 'total_usd' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                   </th>
-                  <th className="p-3 text-right text-xs font-medium uppercase text-muted-foreground">% Book</th>
+                  <th className="whitespace-nowrap px-2.5 py-3 text-right text-xs font-medium uppercase text-muted-foreground">% Book</th>
                 </tr>
               </thead>
               <tbody>
@@ -463,18 +484,20 @@ function ActivoRow({
   return (
     <>
       <tr className="cursor-pointer border-b border-border/50 hover:bg-muted/50" onClick={onToggle}>
-        <td className="p-3 font-mono font-medium">{activo.ticker}</td>
-        <td className="max-w-[250px] truncate p-3 text-muted-foreground" title={activo.descripcion}>
+        <td className="max-w-[110px] truncate px-2.5 py-3 font-mono font-medium" title={activo.ticker}>
+          {activo.ticker}
+        </td>
+        <td className="max-w-[220px] truncate px-2.5 py-3 text-muted-foreground" title={activo.descripcion}>
           {activo.descripcion}
         </td>
-        <td className="p-3">
+        <td className="px-2.5 py-3">
           <Badge variant="secondary" className="text-xs">
             {activo.clase_activo}
           </Badge>
         </td>
-        <td className="p-3 text-xs text-muted-foreground">{activo.forma_legal ?? '—'}</td>
-        <td className="p-3 text-right font-mono tabular-nums text-muted-foreground">{tirCell}</td>
-        <td className="p-3">
+        <td className="px-2.5 py-3 text-xs text-muted-foreground">{activo.forma_legal ?? '—'}</td>
+        <td className="px-2.5 py-3 text-right font-mono tabular-nums text-muted-foreground">{tirCell}</td>
+        <td className="px-2.5 py-3">
           <div className="flex gap-1">
             {activo.brokers.map((b) => (
               <Badge key={b} variant="outline" className="text-xs">
@@ -483,10 +506,10 @@ function ActivoRow({
             ))}
           </div>
         </td>
-        <td className="p-3 text-center">{uniqueTitulares}</td>
-        <td className="p-3 text-right font-mono">{activo.total_cantidad.toLocaleString()}</td>
-        <td className="p-3 text-right font-mono font-medium">{formatCurrency(activo.total_usd)}</td>
-        <td className="p-3 text-right text-muted-foreground">{displayPct.toFixed(1)}%</td>
+        <td className="px-2.5 py-3 text-center">{uniqueTitulares}</td>
+        <td className="px-2.5 py-3 text-right font-mono">{activo.total_cantidad.toLocaleString()}</td>
+        <td className="px-2.5 py-3 text-right font-mono font-medium">{formatCurrency(activo.total_usd)}</td>
+        <td className="px-2.5 py-3 text-right text-muted-foreground">{displayPct.toFixed(1)}%</td>
       </tr>
       {isExpanded && (
         <tr className="bg-muted/30">

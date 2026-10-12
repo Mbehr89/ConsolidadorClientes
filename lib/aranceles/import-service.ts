@@ -1,4 +1,5 @@
 import { REQUIRED_FIELDS } from '@/lib/aranceles/aliases';
+import type { DedupConflict } from '@/lib/aranceles/dedup';
 import { applyImport, removeImports, runFeeAnalysis } from '@/lib/aranceles/history';
 import { IEB_SEGMENTS, type IebSegment } from '@/lib/aranceles/mappers/ieb';
 import { normalizeParsed, parseImportBuffer, type ParsedImport } from '@/lib/aranceles/pipeline';
@@ -96,7 +97,15 @@ export async function commitManualImport(input: {
   prepared: PreparedFile;
   alycName: string;
   notes?: string | null;
-}): Promise<{ importId: string | null; rowCount: number; duplicates: number; anomalyCount: number; scheduleCount: number }> {
+}): Promise<{
+  importId: string | null;
+  rowCount: number;
+  duplicates: number;
+  repeatedInFile: number;
+  conflicts: DedupConflict[];
+  anomalyCount: number;
+  scheduleCount: number;
+}> {
   const { prepared } = input;
   return mutateHistory((history) => {
     const applied = applyImport(history, {
@@ -115,6 +124,8 @@ export async function commitManualImport(input: {
         importId: applied.importRecord?.id ?? null,
         rowCount: applied.inserted,
         duplicates: applied.duplicates,
+        repeatedInFile: applied.repeatedInFile,
+        conflicts: applied.conflicts,
         anomalyCount: countAnomaliesForImport(analyzed, applied.importRecord?.id ?? null),
         scheduleCount: analyzed.fee_schedules.length,
       },
@@ -141,6 +152,7 @@ export type IebSegmentResult = {
   filename: string | null;
   rowCount: number;
   duplicates?: number;
+  conflicts?: number;
   empty: boolean;
   skipped?: boolean;
   error?: string;
@@ -211,7 +223,8 @@ export async function commitIebPeriod(input: {
         segment: seg.id,
         filename: entry.filename,
         rowCount: applied.inserted,
-        duplicates: applied.duplicates,
+        duplicates: applied.duplicates + applied.repeatedInFile,
+        conflicts: applied.conflicts.length,
         empty: false,
       });
     }
@@ -222,18 +235,27 @@ export async function commitIebPeriod(input: {
   });
 }
 
-export async function deleteImport(importId: string): Promise<{ removedRows: number }> {
+/** Borra la importación. Las operaciones que también venían en otro archivo se conservan. */
+export async function deleteImport(importId: string): Promise<{ removedRows: number; keptShared: number }> {
   return mutateHistory((history) => {
     const before = history.commissions.length;
+    const keptShared = history.commissions.filter(
+      (c) => c.import_id === importId && (c.also_in_imports ?? []).some((id) => id !== importId)
+    ).length;
     let h = removeImports(history, [importId]);
+    // Si el archivo de Drive se queda sin importaciones, se olvida el registro para que vuelva a
+    // aparecer como pendiente y se pueda reimportar.
     const drive_files: Record<string, DriveFileRecord> = {};
     for (const [id, rec] of Object.entries(h.drive_files)) {
-      drive_files[id] = rec.import_ids.includes(importId)
-        ? { ...rec, import_ids: rec.import_ids.filter((x) => x !== importId) }
-        : rec;
+      if (!rec.import_ids.includes(importId)) {
+        drive_files[id] = rec;
+        continue;
+      }
+      const remaining = rec.import_ids.filter((x) => x !== importId);
+      if (remaining.length > 0) drive_files[id] = { ...rec, import_ids: remaining };
     }
     h = runFeeAnalysis({ ...h, drive_files });
-    return { history: h, result: { removedRows: before - h.commissions.length } };
+    return { history: h, result: { removedRows: before - h.commissions.length, keptShared } };
   });
 }
 
@@ -295,7 +317,7 @@ function alycForDriveFile(imp: ParsedImport, path: string[]): string {
   if (imp.format === 'gma' || imp.format === 'ieb') {
     const folder = path.find((p) => !looksLikePeriod(p));
     if (imp.format === 'ieb') return 'IEB';
-    return folder ?? imp.suggestedAlycName ?? 'ESCO';
+    return folder ?? imp.suggestedAlycName ?? 'GMA';
   }
   return path.find((p) => !looksLikePeriod(p)) ?? imp.suggestedAlycName ?? 'Sin ALYC';
 }
@@ -307,6 +329,7 @@ export type DriveSyncFileResult = {
   status: DriveFileRecord['status'];
   rowCount: number;
   duplicates: number;
+  conflicts: number;
   message: string | null;
 };
 
@@ -375,13 +398,14 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
       let record: DriveFileRecord;
       let rowCount = 0;
       let duplicates = 0;
+      let conflicts = 0;
 
       if (!item.prepared) {
         record = {
           file_id: file.id, name: file.name, path: pathLabel, modified_time: file.modifiedTime ?? null,
           processed_at: now, status: 'error', message: item.error, import_ids: [],
         };
-      } else if (item.prepared.needsMapping) {
+      } else if (item.prepared.needsMapping || item.prepared.imp.format === 'generic') {
         record = {
           file_id: file.id, name: file.name, path: pathLabel, modified_time: file.modifiedTime ?? null,
           processed_at: now, status: 'needs_mapping',
@@ -411,11 +435,19 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
         });
         h = applied.history;
         rowCount = applied.inserted;
-        duplicates = applied.duplicates;
+        duplicates = applied.duplicates + applied.repeatedInFile;
+        conflicts = applied.conflicts.length;
         if (applied.importRecord) newImportIds.push(applied.importRecord.id);
         const warnings: string[] = [];
         if (item.prepared.errors.length) warnings.push(`${item.prepared.errors.length} filas omitidas por datos inválidos`);
-        if (duplicates) warnings.push(`${duplicates} operaciones ya estaban en el historial`);
+        if (applied.duplicates) warnings.push(`${applied.duplicates} operaciones ya estaban en el historial`);
+        if (applied.enriched) warnings.push(`a ${applied.enriched} de ellas se les completó el productor / detalle`);
+        if (applied.repeatedInFile) warnings.push(`${applied.repeatedInFile} líneas repetidas dentro del archivo`);
+        if (conflicts) {
+          warnings.push(
+            `${conflicts} con un n° de operación ya cargado pero con datos distintos: no se importaron (revisalas en Importar)`
+          );
+        }
         record = {
           file_id: file.id, name: file.name, path: pathLabel, modified_time: file.modifiedTime ?? null,
           processed_at: now, status: 'imported',
@@ -425,7 +457,16 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
       }
 
       h = { ...h, drive_files: { ...h.drive_files, [file.id]: record } };
-      processed.push({ id: file.id, name: file.name, path: pathLabel, status: record.status, rowCount, duplicates, message: record.message });
+      processed.push({
+        id: file.id,
+        name: file.name,
+        path: pathLabel,
+        status: record.status,
+        rowCount,
+        duplicates,
+        conflicts,
+        message: record.message,
+      });
     }
 
     const analyzed = processed.length ? runFeeAnalysis(h) : h;

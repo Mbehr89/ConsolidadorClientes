@@ -3,6 +3,12 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useConsolidation } from '@/lib/context/consolidation-context';
+import {
+  GRUPOS_ASESOR,
+  SIN_GRUPO_ASESOR,
+  grupoAsesorDePosicion,
+  matchesGrupoAsesor,
+} from '@/lib/grupo-asesor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -92,6 +98,7 @@ export default function CashPage() {
   const [search, setSearch] = useState('');
   const [filterBroker, setFilterBroker] = useState('all');
   const [filterAdvisor, setFilterAdvisor] = useState('all');
+  const [filterGrupoAsesor, setFilterGrupoAsesor] = useState('all');
   const [cashColumnKeys, setCashColumnKeys] = useState<Set<CashBucketKey>>(
     () => new Set(ALL_CASH_BUCKET_KEYS)
   );
@@ -104,11 +111,12 @@ export default function CashPage() {
   );
 
   const positions = useMemo(() => {
-    if (filterAdvisor === 'all') return state.allPositions;
     return state.allPositions.filter(
-      (p) => (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor
+      (p) =>
+        (filterAdvisor === 'all' || (state.advisorsByCliente[p.cliente_id]?.trim() ?? '') === filterAdvisor) &&
+        matchesGrupoAsesor(grupoAsesorDePosicion(state.grupoAsesorByCuenta, p), filterGrupoAsesor)
     );
-  }, [state.allPositions, state.advisorsByCliente, filterAdvisor]);
+  }, [state.allPositions, state.advisorsByCliente, state.grupoAsesorByCuenta, filterAdvisor, filterGrupoAsesor]);
 
   const rows = useMemo(
     () => buildCashHolderRows(positions, cashColumnKeys),
@@ -288,6 +296,19 @@ export default function CashPage() {
               ))}
             </select>
           )}
+          <select
+            value={filterGrupoAsesor}
+            onChange={(e) => setFilterGrupoAsesor(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          >
+            <option value="all">Todos los grupos asesor</option>
+            {GRUPOS_ASESOR.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+            <option value={SIN_GRUPO_ASESOR}>Sin grupo asesor</option>
+          </select>
           <Badge variant="secondary" className="tabular-nums">
             Total {formatCurrency(totals.totalUsd)}
           </Badge>

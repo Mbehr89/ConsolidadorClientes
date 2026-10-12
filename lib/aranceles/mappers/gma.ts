@@ -1,6 +1,7 @@
+import { knownMinimum } from "@/lib/aranceles/rules";
 import type { CanonicalField, ColumnMapping } from "@/lib/aranceles/types";
 
-/** Normalized header fragments that identify a GMA / ESCO export. */
+/** Normalized header fragments that identify a GMA export. */
 const GMA_REQUIRED = [
   "comitente (denominacion)",
   "comitente (numero)",
@@ -19,12 +20,16 @@ export const GMA_EXPECTED_MISSING_OPS = new Set([
 
 /** Empiric minimum fees from ESCO_BEHR sample (confirm with tarifario). */
 export const GMA_MIN_FEES: Record<string, number> = {
-  ARS: 19.9,
-  USD: 0.2,
-  USD_C: 0.2,
+  ARS: knownMinimum("esco-trading-ars"),
+  USD: knownMinimum("esco-trading-usd"),
+  USD_EXT: knownMinimum("esco-trading-usd"),
 };
 
 export const GMA_LARGE_NOTIONAL = 1_000_000;
+
+export function gmaCaucionMinFee(currency: string): number {
+  return knownMinimum(currency.startsWith("USD") ? "esco-caucion-usd" : "esco-caucion-ars");
+}
 
 function norm(h: string): string {
   return h
@@ -73,7 +78,7 @@ export function normalizeGmaCurrency(raw: string): string {
   const s = raw.trim().toUpperCase();
   if (!s || s === "$" || s === "ARS" || s === "PESOS" || s === "PESO")
     return "ARS";
-  if (s === "USD C" || s === "USDC" || s === "USD_C") return "USD_C";
+  if (s === "USD C" || s === "USDC" || s === "USD_C") return "USD_EXT";
   if (
     s === "U$D" ||
     s === "USD" ||
@@ -91,5 +96,5 @@ export function isGmaMinFee(currency: string, fee: number): boolean {
   return Math.abs(fee - min) < 0.05;
 }
 
-export const GMA_FORMAT_LABEL = "GMA / ESCO (comitentes + arancel)";
-export const GMA_DEFAULT_ALYC = "ESCO";
+export const GMA_FORMAT_LABEL = "GMA (comitentes + arancel)";
+export const GMA_DEFAULT_ALYC = "GMA";

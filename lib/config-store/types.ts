@@ -89,6 +89,8 @@ export const MappingCuentaEntrySchema = z.object({
   titular: z.string(),
   productor: z.string().nullable().optional(),
   advisor: z.string().nullable().optional(),
+  /** Segmentación interna: 'Grupo Familia' | 'Martin/Mariano' | 'Oficina Vieja' (ver lib/grupo-asesor). */
+  grupo_asesor: z.string().nullable().optional(),
 });
 export type MappingCuentaEntry = z.infer<typeof MappingCuentaEntrySchema>;
 

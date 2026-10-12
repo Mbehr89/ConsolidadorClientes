@@ -10,6 +10,13 @@ import { BrokerCodeSchema, type BrokerCode, type Position } from '@/lib/schema';
 import type { MappingCuentasStore } from '@/lib/config-store/types';
 import { AdminOnly } from '@/components/admin-only';
 import { useConsolidation } from '@/lib/context/consolidation-context';
+import {
+  GRUPOS_ASESOR,
+  SIN_GRUPO_ASESOR,
+  matchesGrupoAsesor,
+  normalizeGrupoAsesor,
+  type GrupoAsesor,
+} from '@/lib/grupo-asesor';
 
 const BROKERS: BrokerCode[] = ['MS', 'NETX360', 'GMA', 'IEB'];
 
@@ -27,6 +34,8 @@ interface MappingRow {
   titular: string;
   productor: string;
   advisor: string;
+  /** '' = sin asignar */
+  grupoAsesor: GrupoAsesor | '';
 }
 
 interface PendingImport {
@@ -42,6 +51,7 @@ function storeToRows(store: MappingCuentasStore): MappingRow[] {
       const titular = typeof value === 'string' ? value : value.titular;
       const productor = typeof value === 'string' ? '' : (value.productor ?? '');
       const advisor = typeof value === 'string' ? '' : (value.advisor ?? '');
+      const grupoAsesor = typeof value === 'string' ? null : normalizeGrupoAsesor(value.grupo_asesor);
       rows.push({
         id: `${broker}::${cuenta}`,
         broker,
@@ -49,6 +59,7 @@ function storeToRows(store: MappingCuentasStore): MappingRow[] {
         titular,
         productor,
         advisor,
+        grupoAsesor: grupoAsesor ?? '',
       });
     }
   }
@@ -71,6 +82,7 @@ function rowsToStore(rows: MappingRow[]): MappingCuentasStore {
         titular,
         productor: productor || null,
         advisor: advisor || null,
+        grupo_asesor: r.grupoAsesor || null,
       };
     }
   }
@@ -105,6 +117,7 @@ function detectedRowsFromPositions(positions: Position[]): MappingRow[] {
       titular,
       productor: p.productor ?? '',
       advisor: '',
+      grupoAsesor: '',
     });
   }
   return Array.from(out.values());
@@ -134,6 +147,7 @@ function detectedRowsFromCache(): MappingRow[] {
         titular: String(p.titular ?? '').trim(),
         productor: String(p.productor ?? '').trim(),
         advisor: '',
+        grupoAsesor: '',
       });
     }
     return out;
@@ -175,8 +189,11 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
   const iTitular = header.indexOf('titular');
   const iProductor = header.indexOf('productor');
   const iAdvisor = header.indexOf('advisor');
+  const iGrupoAsesor = header.findIndex((h) => h === 'grupo_asesor' || h === 'grupo asesor');
   if (iBroker === -1 || iCuenta === -1) {
-    throw new Error('La primera fila debe incluir: broker | cuenta (opcionales: titular, productor, advisor)');
+    throw new Error(
+      'La primera fila debe incluir: broker | cuenta (opcionales: titular, productor, advisor, grupo_asesor)'
+    );
   }
 
   const out: MappingRow[] = [];
@@ -187,7 +204,14 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
     const titular = iTitular >= 0 ? String(row[iTitular] ?? '').trim() : '';
     const productor = iProductor >= 0 ? String(row[iProductor] ?? '').trim() : '';
     const advisor = iAdvisor >= 0 ? String(row[iAdvisor] ?? '').trim() : '';
+    const grupoAsesorRaw = iGrupoAsesor >= 0 ? String(row[iGrupoAsesor] ?? '').trim() : '';
     if (!cuenta && !titular && !brokerRaw) continue;
+    const grupoAsesor = normalizeGrupoAsesor(grupoAsesorRaw);
+    if (grupoAsesorRaw && !grupoAsesor) {
+      throw new Error(
+        `Fila ${r + 1}: grupo asesor inválido "${grupoAsesorRaw}" (opciones: ${GRUPOS_ASESOR.join(', ')})`
+      );
+    }
 
     const br = BrokerCodeSchema.safeParse(brokerRaw);
     if (!br.success) {
@@ -203,6 +227,7 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
       titular,
       productor,
       advisor,
+      grupoAsesor: grupoAsesor ?? '',
     });
   }
   return out;
@@ -217,8 +242,9 @@ function localDateYmd(): string {
 }
 
 export default function MappingCuentasPage() {
-  const { state } = useConsolidation();
+  const { state, refreshGrupoAsesor } = useConsolidation();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [filterGrupoAsesor, setFilterGrupoAsesor] = useState<string>('all');
   const [rows, setRows] = useState<MappingRow[]>([]);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -269,6 +295,21 @@ export default function MappingCuentasPage() {
     }
     return c;
   }, [rows]);
+
+  const countsByGrupoAsesor = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.cuenta.trim()) continue;
+      const k = r.grupoAsesor || SIN_GRUPO_ASESOR;
+      c.set(k, (c.get(k) ?? 0) + 1);
+    }
+    return c;
+  }, [rows]);
+
+  const visibleRows = useMemo(
+    () => rows.filter((r) => matchesGrupoAsesor(r.grupoAsesor || null, filterGrupoAsesor)),
+    [rows, filterGrupoAsesor]
+  );
 
   const totalAccounts = useMemo(() => rows.filter((r) => r.cuenta.trim()).length, [rows]);
   const totalCompleted = useMemo(
@@ -342,23 +383,26 @@ export default function MappingCuentasPage() {
         titular: '',
         productor: '',
         advisor: '',
+        grupoAsesor: filterGrupoAsesor !== 'all' && filterGrupoAsesor !== SIN_GRUPO_ASESOR
+          ? (filterGrupoAsesor as GrupoAsesor)
+          : '',
       },
     ]);
-  }, []);
+  }, [filterGrupoAsesor]);
 
   const removeRow = useCallback((id: string) => {
     setRows((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
-  const updateRow = useCallback((id: string, patch: Partial<Pick<MappingRow, 'broker' | 'cuenta' | 'titular' | 'productor' | 'advisor'>>) => {
+  const updateRow = useCallback((id: string, patch: Partial<Pick<MappingRow, 'broker' | 'cuenta' | 'titular' | 'productor' | 'advisor' | 'grupoAsesor'>>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, []);
 
   const exportBackup = useCallback(() => {
     const dataRows = rows.filter((r) => r.cuenta.trim().length > 0);
     const aoa: string[][] = [
-      ['broker', 'cuenta', 'titular', 'productor', 'advisor'],
-      ...dataRows.map((r) => [r.broker, r.cuenta, r.titular, r.productor, r.advisor]),
+      ['broker', 'cuenta', 'titular', 'productor', 'advisor', 'grupo_asesor'],
+      ...dataRows.map((r) => [r.broker, r.cuenta, r.titular, r.productor, r.advisor, r.grupoAsesor]),
     ];
     const ws = utils.aoa_to_sheet(aoa);
     const wb = utils.book_new();
@@ -380,19 +424,19 @@ export default function MappingCuentasPage() {
       });
       if (!res.ok) throw new Error('No se pudo guardar');
       setSuccess('Mapping guardado correctamente');
-      await load();
+      await Promise.all([load(), refreshGrupoAsesor()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al guardar');
     } finally {
       setSaving(false);
     }
-  }, [rows, load]);
+  }, [rows, load, refreshGrupoAsesor]);
 
   return (
     <AdminOnly>
-      <div className="space-y-6 max-w-5xl">
+      <div className="page-shell">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Mapping cuenta → titular/productor/advisor</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Mapping cuenta → titular/productor/advisor/grupo asesor</h2>
         <p className="text-muted-foreground mt-1">
           GMA y MS no traen nombres en el Excel de tenencias. Subí un archivo con columnas{' '}
           <span className="font-mono text-xs">broker</span>, <span className="font-mono text-xs">cuenta</span>,{' '}
@@ -413,10 +457,33 @@ export default function MappingCuentasPage() {
         ))}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-muted-foreground">Grupo asesor:</span>
+        {[...GRUPOS_ASESOR, SIN_GRUPO_ASESOR].map((g) => {
+          const active = filterGrupoAsesor === g;
+          return (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setFilterGrupoAsesor(active ? 'all' : g)}
+              className={cn(
+                'rounded-pill border px-2.5 py-0.5 text-xs font-medium transition-colors',
+                active ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card hover:bg-muted'
+              )}
+            >
+              {g === SIN_GRUPO_ASESOR ? 'Sin asignar' : g}: {countsByGrupoAsesor.get(g) ?? 0}
+            </button>
+          );
+        })}
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Importar Excel</CardTitle>
-          <CardDescription>Primera fila: broker, cuenta (opcionales: titular, productor, advisor) — broker: MS, NETX360, GMA, IEB</CardDescription>
+          <CardDescription>
+            Primera fila: broker, cuenta (opcionales: titular, productor, advisor, grupo_asesor) — broker: MS, NETX360, GMA,
+            IEB — grupo_asesor: {GRUPOS_ASESOR.join(', ')}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div
@@ -470,6 +537,7 @@ export default function MappingCuentasPage() {
                     <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Titular</th>
                     <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Productor</th>
                     <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Advisor</th>
+                    <th className="text-left p-2 text-xs font-medium text-muted-foreground uppercase">Grupo asesor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -480,6 +548,7 @@ export default function MappingCuentasPage() {
                       <td className="p-2">{r.titular || '—'}</td>
                       <td className="p-2">{r.productor || '—'}</td>
                       <td className="p-2">{r.advisor || '—'}</td>
+                      <td className="p-2">{r.grupoAsesor || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -548,22 +617,25 @@ export default function MappingCuentasPage() {
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Titular</th>
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Productor/Manager</th>
                   <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Advisor</th>
+                  <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Grupo asesor</th>
                     <th className="text-right p-3 text-xs font-medium text-muted-foreground uppercase w-24"> </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.length === 0 && (
+                  {visibleRows.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="p-6 text-center text-muted-foreground text-sm">
-                        No hay filas. Importá un Excel o agregá una fila manualmente.
+                      <td colSpan={7} className="p-6 text-center text-muted-foreground text-sm">
+                        {rows.length === 0
+                          ? 'No hay filas. Importá un Excel o agregá una fila manualmente.'
+                          : 'No hay cuentas en este grupo asesor.'}
                       </td>
                     </tr>
                   )}
-                  {rows.map((r) => (
+                  {visibleRows.map((r) => (
                     <tr key={r.id} className="border-b border-border/40">
                       <td className="p-2 align-middle">
                         <select
-                          className="h-9 w-full min-w-[120px] rounded-md border bg-background px-2 text-sm"
+                          className="h-9 w-full min-w-[100px] rounded-md border bg-background px-2 text-sm"
                           value={r.broker}
                           onChange={(e) => updateRow(r.id, { broker: e.target.value as BrokerCode })}
                         >
@@ -576,7 +648,7 @@ export default function MappingCuentasPage() {
                       </td>
                       <td className="p-2 align-middle">
                         <input
-                          className="h-9 w-full min-w-[200px] rounded-md border bg-background px-2 text-sm font-mono"
+                          className="h-9 w-full min-w-[130px] rounded-md border bg-background px-2 text-sm font-mono"
                           value={r.cuenta}
                           onChange={(e) => updateRow(r.id, { cuenta: e.target.value })}
                           placeholder="ej. 2319 o MFR - 3815"
@@ -584,7 +656,7 @@ export default function MappingCuentasPage() {
                       </td>
                       <td className="p-2 align-middle">
                         <input
-                          className="h-9 w-full min-w-[240px] rounded-md border bg-background px-2 text-sm"
+                          className="h-9 w-full min-w-[200px] rounded-md border bg-background px-2 text-sm"
                           value={r.titular}
                           onChange={(e) => updateRow(r.id, { titular: e.target.value })}
                           placeholder="Nombre titular"
@@ -592,7 +664,7 @@ export default function MappingCuentasPage() {
                       </td>
                       <td className="p-2 align-middle">
                         <input
-                          className="h-9 w-full min-w-[220px] rounded-md border bg-background px-2 text-sm"
+                          className="h-9 w-full min-w-[140px] rounded-md border bg-background px-2 text-sm"
                           value={r.productor}
                           onChange={(e) => updateRow(r.id, { productor: e.target.value })}
                           placeholder="Manager / Productor"
@@ -600,11 +672,25 @@ export default function MappingCuentasPage() {
                       </td>
                       <td className="p-2 align-middle">
                         <input
-                          className="h-9 w-full min-w-[180px] rounded-md border bg-background px-2 text-sm"
+                          className="h-9 w-full min-w-[140px] rounded-md border bg-background px-2 text-sm"
                           value={r.advisor}
                           onChange={(e) => updateRow(r.id, { advisor: e.target.value })}
                           placeholder="Advisor"
                         />
+                      </td>
+                      <td className="p-2 align-middle">
+                        <select
+                          className="h-9 w-full min-w-[150px] rounded-md border bg-background px-2 text-sm"
+                          value={r.grupoAsesor}
+                          onChange={(e) => updateRow(r.id, { grupoAsesor: e.target.value as GrupoAsesor | '' })}
+                        >
+                          <option value="">Sin asignar</option>
+                          {GRUPOS_ASESOR.map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="p-2 align-middle text-right">
                         <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => removeRow(r.id)}>

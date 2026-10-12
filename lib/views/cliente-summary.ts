@@ -1,3 +1,4 @@
+import { grupoAsesorDePosicion } from '@/lib/grupo-asesor';
 import type { Position } from '@/lib/schema';
 
 export interface ClienteSummary {
@@ -8,6 +9,8 @@ export interface ClienteSummary {
   brokers: string[];
   productores: string[];
   advisor: string | null;
+  /** Grupos asesor de sus cuentas (puede haber más de uno si las cuentas difieren). */
+  grupos_asesor: string[];
   aum_usd: number;
   aum_by_broker: Record<string, number>;
   aum_by_clase: Record<string, number>;
@@ -17,7 +20,8 @@ export interface ClienteSummary {
 
 export function buildClienteSummaries(
   positions: Position[],
-  advisorsByCliente: Record<string, string> = {}
+  advisorsByCliente: Record<string, string> = {},
+  grupoAsesorByCuenta: Record<string, string> = {}
 ): ClienteSummary[] {
   const map = new Map<string, ClienteSummary>();
 
@@ -32,6 +36,7 @@ export function buildClienteSummaries(
         brokers: [],
         productores: [],
         advisor: advisorsByCliente[p.cliente_id]?.trim() || null,
+        grupos_asesor: [],
         aum_usd: 0,
         aum_by_broker: {},
         aum_by_clase: {},
@@ -51,6 +56,8 @@ export function buildClienteSummaries(
     const cuentaKey = `${p.broker}:${p.cuenta}`;
     if (!client.cuentas.some((c) => `${c.broker}:${c.cuenta}` === cuentaKey)) {
       client.cuentas.push({ broker: p.broker, cuenta: p.cuenta });
+      const grupo = grupoAsesorDePosicion(grupoAsesorByCuenta, p);
+      if (grupo && !client.grupos_asesor.includes(grupo)) client.grupos_asesor.push(grupo);
     }
     if (!client.brokers.includes(p.broker)) {
       client.brokers.push(p.broker);

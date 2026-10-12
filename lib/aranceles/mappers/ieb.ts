@@ -30,7 +30,7 @@ export const IEB_SEGMENTS: {
   },
   {
     id: "diferencias",
-    label: "Diferencias (SENEBI)",
+    label: "Dif. precios (SENEBI)",
     fileHint: "Diferencias.xlsx",
     required: false,
   },
@@ -79,6 +79,27 @@ export function isIebAcdiHeaders(headers: string[]): boolean {
   return set.has("comision") && set.has("nombredelfondo") && set.has("cliente");
 }
 
+/** Notas, Licitaciones y Diferencias comparten estas columnas; "ArancelNeto" viene vacío ("-"). */
+export function isIebSegmentHeaders(headers: string[]): boolean {
+  const set = new Set(headers.map(norm));
+  return (
+    set.has("id") &&
+    set.has("comitente") &&
+    set.has("cliente") &&
+    set.has("numeroproductor") &&
+    set.has("lineanegocio")
+  );
+}
+
+function segmentFromHeaders(headers: string[]): IebSegment | null {
+  const set = new Set(headers.map(norm));
+  if (!isIebSegmentHeaders(headers)) return null;
+  if (set.has("feecolocador")) return "licitaciones";
+  if (set.has("tipo") && set.has("importe") && set.has("aplica")) return "notas";
+  if (set.has("importe") && set.has("comentario")) return "diferencias";
+  return null;
+}
+
 /** Empty workbook / no headers — valid optional IEB segment. */
 export function isEmptyWorkbook(headers: string[], rowCount: number): boolean {
   return headers.length === 0 || rowCount === 0;
@@ -90,6 +111,8 @@ export function detectIebSegment(
   filename?: string,
 ): IebSegment {
   const fn = (filename ?? "").toLowerCase();
+  const byHeaders = segmentFromHeaders(headers);
+  if (byHeaders) return byHeaders;
   if (isIebAcdiHeaders(headers) || fn.includes("acdi")) return "acdi";
   if (fn.includes("diferencia") || fn.includes("senebi")) return "diferencias";
   if (fn.includes("licitacion")) return "licitaciones";
@@ -152,6 +175,54 @@ export function iebAcdiMapping(headers: string[]): ColumnMapping {
     mapping[header] = field;
   }
   return mapping;
+}
+
+/**
+ * Notas débito/crédito → arancel = "Importe" (las de crédito vienen negativas y restan).
+ * Licitaciones → arancel = "FeeColocador".
+ * Diferencias → arancel = "Importe".
+ */
+export function iebSegmentMapping(headers: string[], segment: IebSegment): ColumnMapping {
+  const feeHeader = segment === "licitaciones" ? "feecolocador" : "importe";
+  const mapping: ColumnMapping = {};
+  for (const header of headers) {
+    const n = norm(header);
+    let field: CanonicalField = "ignore";
+    if (n === "id") field = "op_number";
+    else if (n === "comitente") field = "client_external_id";
+    else if (n === "cliente") field = "client";
+    else if (n === "productor") field = "account_officer";
+    else if (n === "fecha") field = "date";
+    else if (n === "moneda") field = "currency";
+    else if (n === feeHeader) field = "commission";
+    else if (segment === "notas" && n === "tipo") field = "operation";
+    else if (segment === "notas" && n === "especie") field = "instrument";
+    else if (segment === "licitaciones" && n === "colocacion") field = "instrument";
+    mapping[header] = field;
+  }
+  return mapping;
+}
+
+/** Columnas sin campo canónico que se guardan en `details` (productor y datos para el neto). */
+export function iebDetailColumns(
+  headers: string[],
+  segment: IebSegment,
+): Record<string, string> | undefined {
+  const wanted: Record<string, string> = {
+    productor: "productor",
+    numeroproductor: "productor_numero",
+    ...(segment === "notas"
+      ? { modo: "modo", aplica: "aplica", descripcion: "descripcion" }
+      : segment === "diferencias"
+        ? { comentario: "comentario" }
+        : {}),
+  };
+  const out: Record<string, string> = {};
+  for (const header of headers) {
+    const key = wanted[norm(header)];
+    if (key) out[header] = key;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Placeholder mapping for segments without a sample schema yet. */

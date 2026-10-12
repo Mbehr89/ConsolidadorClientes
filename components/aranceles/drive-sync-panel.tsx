@@ -171,7 +171,12 @@ export function DriveSyncPanel({ onImported }: { onImported?: () => void }) {
                     <li key={p.id} className="flex flex-wrap items-center gap-2">
                       <Badge variant={STATUS_BADGE[p.status].variant}>{STATUS_BADGE[p.status].label}</Badge>
                       <span>{p.name}</span>
-                      {p.status === 'imported' && <span className="text-muted-foreground">{p.rowCount} filas</span>}
+                      {p.status === 'imported' && (
+                        <span className="text-muted-foreground">{p.rowCount} operaciones nuevas</span>
+                      )}
+                      {p.conflicts > 0 && (
+                        <Badge variant="warning">{p.conflicts} conflictos (ver Importaciones)</Badge>
+                      )}
                       {p.message && <span className="text-xs text-muted-foreground">{p.message}</span>}
                     </li>
                   ))}

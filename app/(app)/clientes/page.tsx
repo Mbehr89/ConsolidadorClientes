@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { brokerColorClass, formatCompact, formatCurrency, titularTipoClass } from '@/lib/utils';
 import { buildClienteSummaries } from '@/lib/views/cliente-summary';
 import { buildGrupoListRows } from '@/lib/views/grupo-view';
+import { GRUPOS_ASESOR, SIN_GRUPO_ASESOR, clienteMatchesGrupoAsesor } from '@/lib/grupo-asesor';
 import { ExportExcelButton } from '@/components/export-excel-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 
@@ -24,10 +25,11 @@ export default function ClientesPage() {
   const [filterTipo, setFilterTipo] = useState<string>('all');
   const [filterProductor, setFilterProductor] = useState<string>('all');
   const [filterAdvisor, setFilterAdvisor] = useState<string>('all');
+  const [filterGrupoAsesor, setFilterGrupoAsesor] = useState<string>('all');
 
   const clients = useMemo(
-    () => buildClienteSummaries(state.allPositions, state.advisorsByCliente),
-    [state.allPositions, state.advisorsByCliente]
+    () => buildClienteSummaries(state.allPositions, state.advisorsByCliente, state.grupoAsesorByCuenta),
+    [state.allPositions, state.advisorsByCliente, state.grupoAsesorByCuenta]
   );
 
   const grupoView = useMemo(
@@ -61,9 +63,10 @@ export default function ClientesPage() {
     if (filterAdvisor !== 'all') {
       result = result.filter((c) => (c.advisor ?? '') === filterAdvisor);
     }
+    result = result.filter((c) => clienteMatchesGrupoAsesor(c, filterGrupoAsesor));
 
     return result;
-  }, [clients, search, filterBroker, filterTipo, filterProductor, filterAdvisor]);
+  }, [clients, search, filterBroker, filterTipo, filterProductor, filterAdvisor, filterGrupoAsesor]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -101,8 +104,18 @@ export default function ClientesPage() {
         })
       );
     }
+    if (filterGrupoAsesor !== 'all') {
+      rows = rows.filter((g) =>
+        g.miembros.some((m) =>
+          clienteMatchesGrupoAsesor(
+            clients.find((cc) => cc.cliente_id === m.cliente_id),
+            filterGrupoAsesor
+          )
+        )
+      );
+    }
     return rows;
-  }, [grupoView.grupos, search, filterAdvisor, clients]);
+  }, [grupoView.grupos, search, filterAdvisor, filterGrupoAsesor, clients]);
 
   const sinGrupoFiltered = useMemo(() => {
     let rows = grupoView.sinGrupo;
@@ -127,8 +140,9 @@ export default function ClientesPage() {
     if (filterAdvisor !== 'all') {
       rows = rows.filter((c) => (c.advisor ?? '') === filterAdvisor);
     }
+    rows = rows.filter((c) => clienteMatchesGrupoAsesor(c, filterGrupoAsesor));
     return rows;
-  }, [grupoView.sinGrupo, search, filterBroker, filterTipo, filterProductor, filterAdvisor]);
+  }, [grupoView.sinGrupo, search, filterBroker, filterTipo, filterProductor, filterAdvisor, filterGrupoAsesor]);
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -246,6 +260,19 @@ export default function ClientesPage() {
             </option>
           ))}
         </select>
+        <select
+          value={filterGrupoAsesor}
+          onChange={(e) => setFilterGrupoAsesor(e.target.value)}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="all">Todos los grupos asesor</option>
+          {GRUPOS_ASESOR.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+          <option value={SIN_GRUPO_ASESOR}>Sin grupo asesor</option>
+        </select>
       </div>
 
       {viewMode === 'cliente' ? (
@@ -271,6 +298,7 @@ export default function ClientesPage() {
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Cuentas</th>
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Manager/Productor</th>
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Advisor</th>
+                    <th className="text-left p-3 text-xs font-medium text-muted-foreground uppercase">Grupo asesor</th>
                     <th
                       className="text-right p-3 text-xs font-medium text-muted-foreground uppercase cursor-pointer hover:text-foreground"
                       onClick={() => toggleSort('aum_usd')}
@@ -315,6 +343,9 @@ export default function ClientesPage() {
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {client.advisor ?? '—'}
+                      </td>
+                      <td className="p-3 text-xs text-muted-foreground">
+                        {client.grupos_asesor.length > 0 ? client.grupos_asesor.join(', ') : '—'}
                       </td>
                       <td className="p-3 text-right font-mono font-medium">{formatCurrency(client.aum_usd)}</td>
                       <td className="p-3 text-right text-muted-foreground">
