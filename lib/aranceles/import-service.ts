@@ -361,6 +361,7 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
     pending = opts.ids.map((id) => byId.get(id)).filter((f): f is DriveListFileWithPath => Boolean(f && wanted.has(f.id)));
   }
   const batch = pending.slice(0, limit);
+  if (batch.length === 0) return { processed: [], pendingRemaining: 0, anomalyCount: 0 };
 
   type Prepared = { file: DriveListFileWithPath; filename: string; prepared: PreparedFile | null; error: string | null; period: string };
   const prepared: Prepared[] = [];

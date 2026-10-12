@@ -10,3 +10,6 @@ posiciones-consolidadas-*.json
 next-env.d.ts
 coverage/
 .local-store/
+
+.vercel
+.env*
