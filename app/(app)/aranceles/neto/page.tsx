@@ -24,7 +24,7 @@ import {
   type NetReport,
   type NetTotals,
 } from '@/lib/aranceles/net';
-import type { NetRuleVersion } from '@/lib/aranceles/settings';
+import { GMA_BUCKETS, GMA_BUCKET_LABEL, type BucketRule, type NetRuleVersion } from '@/lib/aranceles/settings';
 import { cn } from '@/lib/utils';
 
 function pct(v: number): string {
@@ -530,6 +530,29 @@ function TotalsSummary({ report }: { report: NetReport }) {
   );
 }
 
+function bucketRuleText(label: string, r: BucketRule): string {
+  const iva =
+    r.iva_pesos !== 1 && r.iva_dolares !== 1
+      ? ` ÷ ${r.iva_pesos.toLocaleString('es-AR')}`
+      : r.iva_pesos !== 1
+        ? ` ÷ ${r.iva_pesos.toLocaleString('es-AR')} sólo en pesos`
+        : r.iva_dolares !== 1
+          ? ` ÷ ${r.iva_dolares.toLocaleString('es-AR')} sólo en dólares`
+          : '';
+  return `${label} ${pct(r.share)}${iva}`;
+}
+
+function gmaRulesText(rules: NetRuleVersion): string {
+  const { iibb_rate, buckets } = rules.gma;
+  const list = GMA_BUCKETS.map((b) => buckets[b]);
+  const shares = new Set(list.map((r) => r.share));
+  if (iibb_rate === 0 && shares.size === 1 && list.every((r) => r.iva_pesos === 1 && r.iva_dolares === 1)) {
+    return `a pagar = ${pct(list[0]!.share)} del bruto (sin IIBB ni IVA).`;
+  }
+  const detail = GMA_BUCKETS.map((b) => bucketRuleText(GMA_BUCKET_LABEL[b], buckets[b])).join(' · ');
+  return `IIBB = ${pct(iibb_rate)} del bruto · A pagar = (bruto − IIBB) × retrocesión ÷ IVA. ${detail}.`;
+}
+
 function RulesCard({ report }: { report: NetReport | undefined }) {
   if (!report) return null;
   const rules: NetRuleVersion = report.currentRules;
@@ -543,27 +566,14 @@ function RulesCard({ report }: { report: NetReport | undefined }) {
           </Link>
         </p>
         <p>
-          <span className="font-medium text-foreground">GMA:</span> a pagar = {pct(rules.gma_share)} del bruto.
+          <span className="font-medium text-foreground">GMA:</span> {gmaRulesText(rules)}
         </p>
         <p>
           <span className="font-medium text-foreground">IEB:</span> bruto ajustado = bruto + notas de débito/crédito
           (con su signo, en el tipo que indica su especie) · IIBB = {pct(rules.iibb_rate)} del bruto ajustado ·
           Comisión neta = bruto ajustado − IIBB · A pagar = comisión neta × distribución ÷ IVA.
         </p>
-        <p>
-          {NET_BUCKETS.map((b) => {
-            const r = rules.buckets[b];
-            const iva =
-              r.iva_pesos !== 1 && r.iva_dolares !== 1
-                ? ` ÷ ${r.iva_pesos.toLocaleString('es-AR')}`
-                : r.iva_pesos !== 1
-                  ? ` ÷ ${r.iva_pesos.toLocaleString('es-AR')} sólo en pesos`
-                  : r.iva_dolares !== 1
-                    ? ` ÷ ${r.iva_dolares.toLocaleString('es-AR')} sólo en dólares`
-                    : '';
-            return `${NET_BUCKET_LABEL[b]} ${pct(r.share)}${iva}`;
-          }).join(' · ')}
-        </p>
+        <p>{NET_BUCKETS.map((b) => bucketRuleText(NET_BUCKET_LABEL[b], rules.buckets[b])).join(' · ')}</p>
         {(report.ruleVersionsUsed > 1 || report.agreementRows > 0) && (
           <p className="text-amber-700 dark:text-amber-400">
             {report.ruleVersionsUsed > 1 &&

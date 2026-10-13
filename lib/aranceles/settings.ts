@@ -30,6 +30,24 @@ export type BucketRule = {
   iva_dolares: number;
 };
 
+/** Categorías en que se liquida GMA. */
+export type GmaBucket = 'privado' | 'publico' | 'diferencia' | 'caucion';
+
+export const GMA_BUCKETS: readonly GmaBucket[] = ['privado', 'publico', 'diferencia', 'caucion'];
+
+export const GMA_BUCKET_LABEL: Record<GmaBucket, string> = {
+  privado: NET_BUCKET_LABEL.privado,
+  publico: NET_BUCKET_LABEL.publico,
+  diferencia: NET_BUCKET_LABEL.diferencia,
+  caucion: 'Cauciones',
+};
+
+/** GMA: a pagar = (bruto − IIBB) × retrocesión ÷ IVA. Hoy sin IIBB ni IVA. */
+export type GmaRules = {
+  iibb_rate: number;
+  buckets: Record<GmaBucket, BucketRule>;
+};
+
 /** Alícuotas vigentes desde `valid_from` (hasta la versión siguiente). */
 export type NetRuleVersion = {
   id: string;
@@ -38,8 +56,8 @@ export type NetRuleVersion = {
   iibb_rate: number;
   /** IEB: distribución e IVA por tipo de arancel. */
   buckets: Record<NetBucket, BucketRule>;
-  /** GMA: se paga este porcentaje directo sobre el bruto (sin IIBB ni IVA). */
-  gma_share: number;
+  /** GMA: IIBB, y retrocesión e IVA por categoría. */
+  gma: GmaRules;
   notes: string | null;
   created_at: string;
 };
@@ -97,6 +115,17 @@ export const DEFAULT_PERSON_ALIASES: PersonAlias[] = [
   { alias: 'CLAUDIO', nombres: ['Claudio Behr'] },
 ];
 
+/** La misma retrocesión en todas las categorías, sin IIBB ni IVA. */
+export function gmaRulesWithShare(share: number): GmaRules {
+  return {
+    iibb_rate: 0,
+    buckets: Object.fromEntries(GMA_BUCKETS.map((b) => [b, { share, iva_pesos: 1, iva_dolares: 1 }])) as Record<
+      GmaBucket,
+      BucketRule
+    >,
+  };
+}
+
 export const DEFAULT_NET_RULES: NetRuleVersion = {
   id: 'planilla-ieb',
   valid_from: '2000-01-01',
@@ -109,7 +138,7 @@ export const DEFAULT_NET_RULES: NetRuleVersion = {
     fci_terceros: { share: 0.65, iva_pesos: 1.21, iva_dolares: 1.21 },
     fci_ieb: { share: 0.7, iva_pesos: 1, iva_dolares: 1 },
   },
-  gma_share: 0.6,
+  gma: gmaRulesWithShare(0.6),
   notes: 'IEB: planilla "calculadora aranceles IEB" (licitaciones con las reglas de títulos públicos). GMA: 60% del bruto.',
   created_at: '2026-10-12T00:00:00.000Z',
 };
@@ -131,13 +160,21 @@ function arr<T>(v: unknown): T[] {
 /** Completa lo que falte (p. ej. un tipo nuevo) con los valores de la planilla. */
 export function coerceSettings(raw: unknown): ArancelesSettings {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<ArancelesSettings>;
-  const rules = arr<NetRuleVersion>(r.net_rules).map((v) => ({
-    ...v,
-    gma_share: typeof v.gma_share === 'number' ? v.gma_share : DEFAULT_NET_RULES.gma_share,
-    buckets: Object.fromEntries(
-      NET_BUCKETS.map((b) => [b, { ...DEFAULT_NET_RULES.buckets[b], ...(v.buckets?.[b] ?? {}) }])
-    ) as Record<NetBucket, BucketRule>,
-  }));
+  const rules = arr<NetRuleVersion & { gma_share?: unknown }>(r.net_rules).map(({ gma_share, ...v }) => {
+    const gmaBase = gmaRulesWithShare(typeof gma_share === 'number' ? gma_share : 0.6);
+    return {
+      ...v,
+      gma: {
+        iibb_rate: typeof v.gma?.iibb_rate === 'number' ? v.gma.iibb_rate : gmaBase.iibb_rate,
+        buckets: Object.fromEntries(
+          GMA_BUCKETS.map((b) => [b, { ...gmaBase.buckets[b], ...(v.gma?.buckets?.[b] ?? {}) }])
+        ) as Record<GmaBucket, BucketRule>,
+      },
+      buckets: Object.fromEntries(
+        NET_BUCKETS.map((b) => [b, { ...DEFAULT_NET_RULES.buckets[b], ...(v.buckets?.[b] ?? {}) }])
+      ) as Record<NetBucket, BucketRule>,
+    };
+  });
   return {
     net_rules: rules.length ? sortRules(rules) : [DEFAULT_NET_RULES],
     producers: arr(r.producers),

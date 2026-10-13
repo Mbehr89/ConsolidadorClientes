@@ -12,6 +12,7 @@ import {
   producerOf,
   ruleFor,
   type ArancelesSettings,
+  type GmaBucket,
   type NetBucket,
   type NetRuleVersion,
 } from '@/lib/aranceles/settings';
@@ -29,7 +30,8 @@ export { NET_BUCKETS, NET_BUCKET_LABEL, type NetBucket };
  *   a pagar        = comisión neta × distribución ÷ IVA
  *   Un arreglo comercial del productor pisa la distribución.
  *
- * GMA: a pagar = bruto × porcentaje GMA.
+ * GMA, por categoría (públicos, privados, SENEBI, cauciones):
+ *   a pagar = (bruto − bruto × IIBB GMA) × retrocesión ÷ IVA   (hoy IIBB 0 y sin IVA: bruto × retrocesión)
  */
 
 export type NetAlyc = 'IEB' | 'GMA';
@@ -79,15 +81,15 @@ function up(v: string | null | undefined): string {
 
 type Placeable = Pick<ArancelCommission, 'alyc' | 'segment' | 'operation' | 'instrument' | 'commission'>;
 
+function gmaBucketOf(c: Placeable): GmaBucket {
+  const type = feeTypeOf(c);
+  return type === 'publico' || type === 'diferencia' || type === 'caucion' ? type : 'privado';
+}
+
 /** Dónde entra cada operación en la liquidación; `null` si la ALYC no tiene regla de neto. */
 export function netPlacement(c: Placeable): NetPlacement {
   const alyc = netAlycOf(c.alyc);
-  if (alyc === 'GMA') {
-    const type = feeTypeOf(c);
-    const bucket: NetLineKey =
-      type === 'publico' || type === 'diferencia' || type === 'caucion' ? type : 'privado';
-    return { bucket, kind: 'bruto' };
-  }
+  if (alyc === 'GMA') return { bucket: gmaBucketOf(c), kind: 'bruto' };
   if (alyc !== 'IEB') return null;
   switch (feeTypeOf(c)) {
     case 'publico':
@@ -234,24 +236,28 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
   if (placement.bucket == null) return { excluded: placement.excluded };
   const rule = ruleFor(settings, c.trade_date);
   const amount = c.commission;
+  const currency = c.commission_currency || c.currency;
   if (netAlycOf(c.alyc) === 'GMA') {
+    const g = rule.gma.buckets[gmaBucketOf(c)];
+    const iva = netSheet(currency) === 'pesos' ? g.iva_pesos : g.iva_dolares;
+    const iibb = amount * rule.gma.iibb_rate;
+    const neto = amount - iibb;
     return {
       alyc: 'GMA',
       ...placement,
       amount,
-      iibb: 0,
-      neto: amount,
-      aPagar: amount * rule.gma_share,
-      share: rule.gma_share,
-      iva: 1,
-      iibbRate: 0,
+      iibb,
+      neto,
+      aPagar: (neto * g.share) / iva,
+      share: g.share,
+      iva,
+      iibbRate: rule.gma.iibb_rate,
       agreement: false,
       ruleId: rule.id,
     };
   }
   const bucket = placement.bucket;
   if (bucket === 'caucion') return { excluded: 'otro' };
-  const currency = c.commission_currency || c.currency;
   const agreement = agreementFor(settings, producerOf(c, settings), c.trade_date);
   const share = agreement?.shares[bucket] ?? rule.buckets[bucket].share;
   const iva = ivaDivisor(bucket, currency, rule);

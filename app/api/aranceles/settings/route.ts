@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { accountsWithoutProducer, detectAccountChanges, summarizeProducers } from '@/lib/aranceles/producers';
-import { NET_BUCKETS, coerceSettings, currentRule, type ArancelesSettings } from '@/lib/aranceles/settings';
+import { GMA_BUCKETS, NET_BUCKETS, coerceSettings, currentRule, type ArancelesSettings } from '@/lib/aranceles/settings';
 import { loadHistory, mutateHistory } from '@/lib/aranceles/store';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +22,10 @@ const settingsSchema = z.object({
         valid_from: isoDate,
         iibb_rate: rate,
         buckets: z.object(Object.fromEntries(NET_BUCKETS.map((b) => [b, bucketRule])) as Record<string, typeof bucketRule>),
-        gma_share: rate,
+        gma: z.object({
+          iibb_rate: rate,
+          buckets: z.object(Object.fromEntries(GMA_BUCKETS.map((b) => [b, bucketRule])) as Record<string, typeof bucketRule>),
+        }),
         notes: text,
         created_at: z.string(),
       })

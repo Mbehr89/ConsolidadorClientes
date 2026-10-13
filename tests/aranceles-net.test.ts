@@ -158,6 +158,52 @@ describe('aranceles: neto IEB (calculadora)', () => {
     expect(netAmountOf(h.commissions.find((c) => c.op_number === '9')!, defaultSettings())).toBeCloseTo(24, 10);
   });
 
+  it('GMA: retrocesión por categoría, IIBB e IVA configurables (por defecto no se calculan)', () => {
+    const h = applyImport(emptyHistory(), {
+      alyc: 'GMA',
+      filename: 'g.xlsx',
+      rows: [
+        row('1', 100, 'ARS', { operation: 'COMPRA', instrument: 'GGAL' }),
+        row('2', 100, 'ARS', { operation: 'VENTA', instrument: 'AL30' }),
+        row('3', 100, 'USD', { operation: 'CSBNG', instrument: 'AL35' }),
+      ],
+      format: 'gma',
+    }).history;
+    const op = (n: string) => h.commissions.find((c) => c.op_number === n)!;
+    const base = defaultSettings();
+    expect(['1', '2', '3'].map((n) => netAmountOf(op(n), base))).toEqual([60, 60, 60]);
+
+    const rule = base.net_rules[0]!;
+    const settings: ArancelesSettings = {
+      ...base,
+      net_rules: [
+        {
+          ...rule,
+          gma: {
+            iibb_rate: 0.05,
+            buckets: {
+              ...rule.gma.buckets,
+              publico: { share: 0.5, iva_pesos: 1, iva_dolares: 1 },
+              diferencia: { share: 0.6, iva_pesos: 1.21, iva_dolares: 1.21 },
+            },
+          },
+        },
+      ],
+    };
+    expect(netAmountOf(op('1'), settings)).toBeCloseTo(95 * 0.6, 10);
+    expect(netAmountOf(op('2'), settings)).toBeCloseTo(95 * 0.5, 10);
+    expect(netAmountOf(op('3'), settings)).toBeCloseTo((95 * 0.6) / 1.21, 10);
+  });
+
+  it('GMA: la configuración vieja (gma_share) se migra a todas las categorías', () => {
+    const { gma: _gma, ...old } = DEFAULT_NET_RULES;
+    const s = coerceSettings({ net_rules: [{ ...old, gma_share: 0.55 }] });
+    const gma = s.net_rules[0]!.gma;
+    expect(gma.iibb_rate).toBe(0);
+    expect(Object.values(gma.buckets)).toEqual(Array(4).fill({ share: 0.55, iva_pesos: 1, iva_dolares: 1 }));
+    expect('gma_share' in s.net_rules[0]!).toBe(false);
+  });
+
   it('detalle mensual por broker × productor/manager × tipo, con subtotal por broker', () => {
     let h = load(emptyHistory(), 'aranceles_privado', [
       row('1', 100, 'ARS', { operation: 'PRIVADO', details: { productor_numero: '7' } }),

@@ -8,6 +8,8 @@ import { ErrorBlock, LoadingBlock, inputClass, readJson } from '@/components/ara
 import { formatDate, formatTotals } from '@/lib/aranceles/format';
 import type { AccountProducerChange, ProducerSummary } from '@/lib/aranceles/producers';
 import {
+  GMA_BUCKETS,
+  GMA_BUCKET_LABEL,
   NET_BUCKETS,
   NET_BUCKET_LABEL,
   newSettingsId,
@@ -16,6 +18,7 @@ import {
   type ArancelesSettings,
   type PersonAlias,
   type BucketRule,
+  type GmaBucket,
   type NetBucket,
   type NetRuleVersion,
   type ProducerAgreement,
@@ -91,6 +94,84 @@ function SectionTitle({ title, description }: { title: string; description: stri
   );
 }
 
+type RuleRow = { key: string; label: string; rule: BucketRule };
+
+/** IIBB + tabla de distribución / IVA por tipo de arancel de una ALYC. */
+function AlycRulesBlock({
+  title,
+  shareLabel,
+  iibbRate,
+  onIibb,
+  rows,
+  onRow,
+  onAllShares,
+}: {
+  title: string;
+  shareLabel: string;
+  iibbRate: number;
+  onIibb: (v: number) => void;
+  rows: RuleRow[];
+  onRow: (key: string, patch: Partial<BucketRule>) => void;
+  onAllShares?: (v: number) => void;
+}) {
+  const neto = 1 - iibbRate;
+  const shares = new Set(rows.map((x) => x.rule.share));
+  return (
+    <div className="space-y-2 rounded-md bg-muted/30 p-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <p className="mr-2 self-center text-sm font-semibold">{title}</p>
+        <label className="space-y-1 text-xs text-muted-foreground">
+          IIBB (sobre el bruto)
+          <PctInput className="w-28" value={iibbRate} onChange={(v) => v != null && onIibb(v)} />
+        </label>
+        {onAllShares && (
+          <label className="space-y-1 text-xs text-muted-foreground">
+            {shareLabel} para todas
+            <PctInput
+              className="w-28"
+              value={shares.size === 1 ? rows[0]?.rule.share : undefined}
+              placeholder="varía"
+              onChange={(v) => v != null && onAllShares(v)}
+            />
+          </label>
+        )}
+      </div>
+      <div className="overflow-auto">
+        <table className="w-full min-w-[620px] text-sm">
+          <thead className="border-b text-xs uppercase text-muted-foreground">
+            <tr>
+              <th className="p-2 text-left font-medium">Tipo de arancel {title}</th>
+              <th className="p-2 text-right font-medium">{shareLabel}</th>
+              <th className="p-2 text-left font-medium">IVA hoja pesos</th>
+              <th className="p-2 text-left font-medium">IVA hoja dólares</th>
+              <th className="p-2 text-right font-medium">Alíc. neta pesos</th>
+              <th className="p-2 text-right font-medium">Alíc. neta dólares</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ key, label, rule }) => (
+              <tr key={key} className="border-b border-border/50 last:border-0">
+                <td className="p-2">{label}</td>
+                <td className="p-2">
+                  <PctInput className="ml-auto w-28" value={rule.share} onChange={(v) => v != null && onRow(key, { share: v })} />
+                </td>
+                <td className="p-2">
+                  <IvaSelect value={rule.iva_pesos} onChange={(v) => onRow(key, { iva_pesos: v })} />
+                </td>
+                <td className="p-2">
+                  <IvaSelect value={rule.iva_dolares} onChange={(v) => onRow(key, { iva_dolares: v })} />
+                </td>
+                <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * rule.share) / rule.iva_pesos)}</td>
+                <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * rule.share) / rule.iva_dolares)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function RulesSection({
   rules,
   currentId,
@@ -106,6 +187,11 @@ function RulesSection({
     onChange(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const updateBucket = (r: NetRuleVersion, b: NetBucket, patch: Partial<BucketRule>) =>
     update(r.id, { buckets: { ...r.buckets, [b]: { ...r.buckets[b], ...patch } } });
+  const updateGma = (r: NetRuleVersion, keys: readonly GmaBucket[], patch: Partial<BucketRule>) => {
+    const buckets = { ...r.gma.buckets };
+    for (const b of keys) buckets[b] = { ...buckets[b], ...patch };
+    update(r.id, { gma: { ...r.gma, buckets } });
+  };
   const addVersion = () => {
     if (rules.some((r) => r.valid_from === newFrom)) return;
     const base = sorted.find((r) => r.valid_from <= newFrom) ?? sorted[sorted.length - 1]!;
@@ -119,7 +205,7 @@ function RulesSection({
     <Card>
       <SectionTitle
         title="Alícuotas de liquidación"
-        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. GMA: porcentaje directo sobre el bruto. IEB: iguales para todos los productores salvo arreglo comercial; USD y dólar exterior usan la hoja dólares, pero se informan por separado."
+        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. En ambas ALYC: a pagar = (bruto − IIBB) × distribución o retrocesión ÷ IVA. IEB: iguales para todos los productores salvo arreglo comercial. GMA: hoy sin IIBB ni IVA (dejá 0% y «Sin IVA» mientras no haga falta). USD y dólar exterior usan la hoja dólares, pero se informan por separado."
       />
       <CardContent className="space-y-6">
         {sorted.map((r) => (
@@ -133,14 +219,6 @@ function RulesSection({
                   value={r.valid_from}
                   onChange={(e) => e.target.value && update(r.id, { valid_from: e.target.value })}
                 />
-              </label>
-              <label className="space-y-1 text-xs text-muted-foreground">
-                IEB · IIBB (sobre el bruto)
-                <PctInput className="w-28" value={r.iibb_rate} onChange={(v) => v != null && update(r.id, { iibb_rate: v })} />
-              </label>
-              <label className="space-y-1 text-xs text-muted-foreground">
-                GMA · se paga sobre el bruto
-                <PctInput className="w-28" value={r.gma_share} onChange={(v) => v != null && update(r.id, { gma_share: v })} />
               </label>
               <label className="min-w-[240px] flex-1 space-y-1 text-xs text-muted-foreground">
                 Notas
@@ -165,42 +243,23 @@ function RulesSection({
                 </Button>
               )}
             </div>
-            <div className="overflow-auto">
-              <table className="w-full min-w-[620px] text-sm">
-                <thead className="border-b text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="p-2 text-left font-medium">Tipo de arancel IEB</th>
-                    <th className="p-2 text-right font-medium">Distribución</th>
-                    <th className="p-2 text-left font-medium">IVA hoja pesos</th>
-                    <th className="p-2 text-left font-medium">IVA hoja dólares</th>
-                    <th className="p-2 text-right font-medium">Alíc. neta pesos</th>
-                    <th className="p-2 text-right font-medium">Alíc. neta dólares</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {NET_BUCKETS.map((b) => {
-                    const br = r.buckets[b];
-                    const neto = 1 - r.iibb_rate;
-                    return (
-                      <tr key={b} className="border-b border-border/50 last:border-0">
-                        <td className="p-2">{NET_BUCKET_LABEL[b]}</td>
-                        <td className="p-2">
-                          <PctInput className="ml-auto w-28" value={br.share} onChange={(v) => v != null && updateBucket(r, b, { share: v })} />
-                        </td>
-                        <td className="p-2">
-                          <IvaSelect value={br.iva_pesos} onChange={(v) => updateBucket(r, b, { iva_pesos: v })} />
-                        </td>
-                        <td className="p-2">
-                          <IvaSelect value={br.iva_dolares} onChange={(v) => updateBucket(r, b, { iva_dolares: v })} />
-                        </td>
-                        <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * br.share) / br.iva_pesos)}</td>
-                        <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * br.share) / br.iva_dolares)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <AlycRulesBlock
+              title="IEB"
+              shareLabel="Distribución"
+              iibbRate={r.iibb_rate}
+              onIibb={(v) => update(r.id, { iibb_rate: v })}
+              rows={NET_BUCKETS.map((b) => ({ key: b, label: NET_BUCKET_LABEL[b], rule: r.buckets[b] }))}
+              onRow={(b, patch) => updateBucket(r, b as NetBucket, patch)}
+            />
+            <AlycRulesBlock
+              title="GMA"
+              shareLabel="Retrocesión"
+              iibbRate={r.gma.iibb_rate}
+              onIibb={(v) => update(r.id, { gma: { ...r.gma, iibb_rate: v } })}
+              rows={GMA_BUCKETS.map((b) => ({ key: b, label: GMA_BUCKET_LABEL[b], rule: r.gma.buckets[b] }))}
+              onRow={(b, patch) => updateGma(r, [b as GmaBucket], patch)}
+              onAllShares={(v) => updateGma(r, GMA_BUCKETS, { share: v })}
+            />
           </div>
         ))}
         <div className="flex flex-wrap items-end gap-2">
