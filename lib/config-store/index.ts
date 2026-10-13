@@ -6,6 +6,7 @@
  *
  * Cada store es un key remoto con valor JSON validado por Zod.
  * Los datos son SOLO config (alias, grupos, tickers, mappings) — nunca PII ni tenencias.
+ * `auth:users` guarda los usuarios de la app: nombre, rol y hash bcrypt (nunca la contraseña).
  */
 import { z } from 'zod';
 import { promises as fs } from 'node:fs';
@@ -23,6 +24,7 @@ export const STORE_KEYS = {
   TIPO_CUENTA_MS: 'config:tipo-cuenta-ms',
   FX_DEFAULTS: 'config:fx-defaults',
   DRIVE_IMPORTED: 'config:drive-imported',
+  AUTH_USERS: 'auth:users',
 } as const;
 
 // ─── In-memory store (dev) ──────────────────────────────

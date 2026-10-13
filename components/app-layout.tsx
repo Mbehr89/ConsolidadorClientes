@@ -20,6 +20,7 @@ import {
   Receipt,
   Settings2,
   Upload,
+  UserCog,
   Users,
   X,
 } from 'lucide-react';
@@ -45,6 +46,7 @@ const ADMIN_ITEMS = [
   { href: '/admin/grupos', label: 'Grupos', icon: Users },
   { href: '/admin/mapping-cuentas', label: 'Mapping Cuentas', icon: Settings2 },
   { href: '/admin/brokers', label: 'Brokers', icon: Gauge },
+  { href: '/admin/usuarios', label: 'Usuarios', icon: UserCog },
 ] as const;
 
 function authBypassedInDev() {

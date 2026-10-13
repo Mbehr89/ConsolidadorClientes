@@ -1,8 +1,10 @@
 ﻿import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
-import bcrypt from 'bcryptjs';
-import { parseLocalAuthUsers, isLocalAuthConfigured } from '@/lib/auth/local-users';
+import { getUser, verifyCredentials } from '@/lib/auth/user-store';
+
+/** Cada cuánto una sesión con usuario y contraseña se revalida contra la lista de usuarios. */
+const CREDENTIALS_RECHECK_MS = 60_000;
 
 function normalizeEmail(v: string | null | undefined): string {
   return (v ?? '').trim().toLowerCase();
@@ -45,36 +47,31 @@ if (hasGoogleAuth) {
   );
 }
 
-if (isLocalAuthConfigured()) {
-  providers.push(
-    CredentialsProvider({
-      name: 'credentials',
-      credentials: {
-        username: { label: 'Usuario', type: 'text' },
-        password: { label: 'Contraseña', type: 'password' },
-      },
-      async authorize(credentials) {
-        const username = credentials?.username?.trim();
-        const password = credentials?.password ?? '';
-        if (!username || !password) return null;
+providers.push(
+  CredentialsProvider({
+    name: 'credentials',
+    credentials: {
+      username: { label: 'Usuario', type: 'text' },
+      password: { label: 'Contraseña', type: 'password' },
+    },
+    async authorize(credentials) {
+      const username = credentials?.username?.trim();
+      const password = credentials?.password ?? '';
+      if (!username || !password) return null;
 
-        const users = parseLocalAuthUsers(process.env.AUTH_LOCAL_USERS);
-        const row = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-        if (!row) return null;
+      const row = await verifyCredentials(username, password);
+      if (!row) return null;
 
-        const ok = await bcrypt.compare(password, row.passwordHash);
-        if (!ok) return null;
-
-        return {
-          id: row.username,
-          name: row.username,
-          email: `${row.username}@local.auth`,
-          isAdmin: row.admin,
-        };
-      },
-    })
-  );
-}
+      return {
+        id: row.username,
+        name: row.username,
+        email: `${row.username}@local.auth`,
+        isAdmin: row.admin,
+        sessionVersion: row.session_version,
+      };
+    },
+  })
+);
 
 export const authOptions: NextAuthOptions = {
   providers,
@@ -111,12 +108,24 @@ export const authOptions: NextAuthOptions = {
     },
     async jwt({ token, user, account }) {
       if (account?.provider === 'credentials' && user) {
-        const u = user as { isAdmin?: boolean; email?: string | null; id?: string };
-        token.isAdmin = Boolean(u.isAdmin);
-        token.email = u.email ?? undefined;
-        token.sub = u.id ?? token.sub;
+        token.isAdmin = Boolean(user.isAdmin);
+        token.email = user.email ?? undefined;
+        token.sub = user.id ?? token.sub;
         token.authProvider = 'credentials';
+        token.sessionVersion = user.sessionVersion ?? 0;
+        token.checkedAt = Date.now();
+        token.revoked = false;
         return token;
+      }
+
+      if (token.authProvider === 'credentials') {
+        if (token.revoked || !token.sub) return { ...token, revoked: true, isAdmin: false };
+        if (Date.now() - (token.checkedAt ?? 0) < CREDENTIALS_RECHECK_MS) return token;
+        const current = await getUser(token.sub).catch(() => undefined);
+        if (!current || current.session_version !== (token.sessionVersion ?? 0)) {
+          return { ...token, revoked: true, isAdmin: false };
+        }
+        return { ...token, isAdmin: current.admin, checkedAt: Date.now() };
       }
 
       if (account?.provider === 'google') {
@@ -129,14 +138,12 @@ export const authOptions: NextAuthOptions = {
       }
 
       const email = normalizeEmail(token.email);
-      if (token.authProvider !== 'credentials') {
-        token.isAdmin = email ? adminEmails.has(email) : false;
-      }
-
+      token.isAdmin = email ? adminEmails.has(email) : false;
       return token;
     },
     async session({ session, token }) {
       session.isAdmin = Boolean(token.isAdmin);
+      session.revoked = Boolean(token.revoked);
       session.hasDriveAccess = Boolean(token.googleAccessToken);
       return session;
     },

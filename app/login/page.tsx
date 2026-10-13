@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import Image from 'next/image';
-import { signIn, useSession } from 'next-auth/react';
+import { signIn, signOut, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -69,7 +69,7 @@ function LoginFallback() {
 }
 
 function LoginPageInner() {
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
@@ -94,9 +94,10 @@ function LoginPageInner() {
       return;
     }
     if (status === 'authenticated') {
-      router.replace(callbackUrl);
+      if (session?.revoked) void signOut({ redirect: false });
+      else router.replace(callbackUrl);
     }
-  }, [status, router, callbackUrl]);
+  }, [status, session?.revoked, router, callbackUrl]);
 
   const onLocalSubmit = useCallback(
     async (e: React.FormEvent) => {
