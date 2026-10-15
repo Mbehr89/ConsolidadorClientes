@@ -11,10 +11,14 @@ import {
 } from '@/lib/grupo-asesor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Download } from 'lucide-react';
+import { downloadSelectionExcel } from '@/lib/export/selection-excel';
 import { cn, formatCurrency } from '@/lib/utils';
 import type { Position } from '@/lib/schema';
 import {
   CASH_BUCKET_DEFS,
+  cashBucketLabel,
   formatCashBucketAmount,
   getCashBucketKey,
   getCashCellValue,
@@ -189,6 +193,117 @@ export default function CashPage() {
     return { byBucket, totalUsd };
   }, [sorted, visibleCashBuckets]);
 
+  const exportExcel = () => {
+    const advisorOf = (id: string) => state.advisorsByCliente[id]?.trim() || '';
+    const bucketHeader = (key: CashBucketKey, label: string) =>
+      `${label} (${key === 'ars' || key === 'money_market_ars' ? 'ARS' : key === 'eur' ? 'EUR' : 'USD'})`;
+    const visible = new Set(sorted.map((r) => r.cliente_id));
+    const titularById = new Map(sorted.map((r) => [r.cliente_id, r.titular]));
+    const detail = positions
+      .filter(
+        (p) =>
+          visible.has(p.cliente_id) &&
+          (isCashBucketPosition(p) || p.clase_activo === 'cash') &&
+          cashColumnKeys.has(getCashBucketKey(p))
+      )
+      .map((p) => {
+        const bucket = getCashBucketKey(p);
+        return {
+          p,
+          bucket,
+          monto: getCashCellValue(
+            { valor_usd: p.valor_mercado_usd ?? 0, valor_local: p.valor_mercado_local, moneda: p.moneda },
+            bucket
+          ),
+        };
+      })
+      .sort(
+        (a, b) =>
+          (titularById.get(a.p.cliente_id) ?? '').localeCompare(titularById.get(b.p.cliente_id) ?? '') ||
+          a.p.broker.localeCompare(b.p.broker) ||
+          a.p.cuenta.localeCompare(b.p.cuenta)
+      );
+    const bucketCols = visibleCashBuckets.map(({ key, label }) => ({
+      header: bucketHeader(key, label),
+      type: 'money' as const,
+    }));
+    downloadSelectionExcel(
+      'cash_seleccion',
+      [
+        {
+          name: 'Cash por cliente',
+          columns: [
+            { header: 'Titular', width: 34 },
+            { header: 'Cliente ID', width: 16 },
+            { header: 'Advisor', width: 18 },
+            { header: 'Broker', width: 12 },
+            { header: 'Cuenta', width: 14 },
+            ...bucketCols,
+            { header: 'Valor USD', type: 'money' },
+          ],
+          rows: sorted.map((r) => [
+            r.titular,
+            r.cliente_id,
+            advisorOf(r.cliente_id),
+            r.brokerLabel,
+            r.cuentaLabel,
+            ...visibleCashBuckets.map(({ key }) => r.byBucket[key] ?? null),
+            r.total_usd,
+          ]),
+          footer: [
+            `Total (${sorted.length})`,
+            null,
+            null,
+            null,
+            null,
+            ...visibleCashBuckets.map(({ key }) => totals.byBucket[key] ?? null),
+            totals.totalUsd,
+          ],
+        },
+        {
+          name: 'Detalle por cuenta',
+          columns: [
+            { header: 'Titular', width: 34 },
+            { header: 'Cliente ID', width: 16 },
+            { header: 'Advisor', width: 18 },
+            { header: 'Grupo asesor', width: 18 },
+            { header: 'Broker', width: 12 },
+            { header: 'Cuenta', width: 14 },
+            { header: 'Segmento', width: 16 },
+            { header: 'Instrumento', width: 28 },
+            { header: 'Moneda', width: 10 },
+            { header: 'Monto (moneda del segmento)', type: 'money', width: 20 },
+            { header: 'Valor USD', type: 'money' },
+          ],
+          rows: detail.map(({ p, bucket, monto }) => [
+            titularById.get(p.cliente_id) ?? p.titular,
+            p.cliente_id,
+            advisorOf(p.cliente_id),
+            grupoAsesorDePosicion(state.grupoAsesorByCuenta, p) ?? '',
+            p.broker,
+            p.cuenta,
+            cashBucketLabel(bucket),
+            p.ticker ?? p.descripcion,
+            p.moneda,
+            monto,
+            p.valor_mercado_usd ?? null,
+          ]),
+        },
+      ],
+      [
+        ['Búsqueda', search || '—'],
+        ['Broker', filterBroker === 'all' ? 'Todos' : filterBroker],
+        ['Advisor', filterAdvisor === 'all' ? 'Todos' : filterAdvisor],
+        [
+          'Grupo asesor',
+          filterGrupoAsesor === 'all' ? 'Todos' : filterGrupoAsesor === SIN_GRUPO_ASESOR ? 'Sin grupo asesor' : filterGrupoAsesor,
+        ],
+        ['Segmentos', visibleCashBuckets.map((d) => d.label).join(', ') || '—'],
+        ['Clientes', String(sorted.length)],
+      ]
+    );
+  };
+
   const toggleCashColumn = (key: CashBucketKey) => {
     setCashColumnKeys((prev) => {
       const next = new Set(prev);
@@ -312,6 +427,10 @@ export default function CashPage() {
           <Badge variant="secondary" className="tabular-nums">
             Total {formatCurrency(totals.totalUsd)}
           </Badge>
+          <Button variant="outline" size="sm" className="gap-1.5" disabled={sorted.length === 0} onClick={exportExcel}>
+            <Download className="h-4 w-4" />
+            Excel
+          </Button>
         </CardContent>
       </Card>
 

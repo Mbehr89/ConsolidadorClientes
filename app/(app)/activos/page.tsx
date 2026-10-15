@@ -10,6 +10,9 @@ import {
 } from '@/lib/grupo-asesor';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Download } from 'lucide-react';
+import { downloadSelectionExcel } from '@/lib/export/selection-excel';
 import { formatCompact, formatCurrency } from '@/lib/utils';
 import Link from 'next/link';
 import type { Position, ClaseActivo } from '@/lib/schema';
@@ -30,7 +33,7 @@ interface ActivoSummary {
   titulares: {
     cliente_id: string;
     titular: string;
-    broker: string;
+    broker: Position['broker'];
     cuenta: string;
     cantidad: number;
     valor_usd: number;
@@ -267,6 +270,97 @@ export default function ActivosPage() {
 
   const tableColSpan = 10;
 
+  const exportExcel = () => {
+    const ytm = (a: ActivoSummary) => bondYtmByAggKey.get(a.aggKey) ?? null;
+    const label = (options: { value: string; label: string }[], v: string) =>
+      options.find((o) => o.value === v)?.label ?? v;
+    downloadSelectionExcel(
+      'activos_seleccion',
+      [
+        {
+          name: 'Por cliente',
+          columns: [
+            { header: 'Ticker', width: 12 },
+            { header: 'Descripción', width: 34 },
+            { header: 'Clase', width: 10 },
+            { header: 'Forma legal', width: 12 },
+            { header: 'TIR', type: 'pct', width: 10 },
+            { header: 'Titular', width: 34 },
+            { header: 'Cliente ID', width: 16 },
+            { header: 'Advisor', width: 18 },
+            { header: 'Grupo asesor', width: 18 },
+            { header: 'Broker', width: 12 },
+            { header: 'Cuenta', width: 14 },
+            { header: 'Cantidad', type: 'qty' },
+            { header: 'Valor USD', type: 'money' },
+            { header: '% del instrumento', type: 'pct', width: 12 },
+          ],
+          rows: sorted.flatMap((a) =>
+            a.titulares
+              .slice()
+              .sort((x, y) => y.valor_usd - x.valor_usd)
+              .map((t) => [
+                a.ticker,
+                a.descripcion,
+                a.clase_activo,
+                a.forma_legal ?? '',
+                ytm(a),
+                t.titular,
+                t.cliente_id,
+                state.advisorsByCliente[t.cliente_id]?.trim() || '',
+                grupoAsesorDePosicion(state.grupoAsesorByCuenta, t) ?? '',
+                t.broker,
+                t.cuenta,
+                t.cantidad,
+                t.valor_usd,
+                a.total_usd > 0 ? t.valor_usd / a.total_usd : null,
+              ])
+          ),
+        },
+        {
+          name: 'Instrumentos',
+          columns: [
+            { header: 'Ticker', width: 12 },
+            { header: 'Descripción', width: 34 },
+            { header: 'Clase', width: 10 },
+            { header: 'Forma legal', width: 12 },
+            { header: 'TIR', type: 'pct', width: 10 },
+            { header: 'Brokers', width: 18 },
+            { header: 'Titulares', width: 10 },
+            { header: 'Cant. total', type: 'qty' },
+            { header: 'Valor USD', type: 'money' },
+            { header: '% Book', type: 'pct', width: 10 },
+          ],
+          rows: sorted.map((a) => [
+            a.ticker,
+            a.descripcion,
+            a.clase_activo,
+            a.forma_legal ?? '',
+            ytm(a),
+            a.brokers.join(', '),
+            new Set(a.titulares.map((t) => t.cliente_id)).size,
+            a.total_cantidad,
+            a.total_usd,
+            totalAum > 0 ? a.total_usd / totalAum : null,
+          ]),
+          footer: [`Total (${sorted.length})`, null, null, null, null, null, null, null, totalAum, totalAum > 0 ? 1 : null],
+        },
+      ],
+      [
+        ['Búsqueda', search || '—'],
+        ['Clase', label(CLASE_OPTIONS, filterClase)],
+        ['Forma legal', label(FORMA_OPTIONS, filterForma)],
+        ['Broker', filterBroker === 'all' ? 'Todos' : filterBroker],
+        ['Advisor', filterAdvisor === 'all' ? 'Todos' : filterAdvisor],
+        [
+          'Grupo asesor',
+          filterGrupoAsesor === 'all' ? 'Todos' : filterGrupoAsesor === SIN_GRUPO_ASESOR ? 'Sin grupo asesor' : filterGrupoAsesor,
+        ],
+        ['Instrumentos', String(sorted.length)],
+      ]
+    );
+  };
+
   if (!state.hasParsed) {
     return (
       <div>
@@ -398,6 +492,10 @@ export default function ActivosPage() {
             Limpiar filtros
           </button>
         )}
+        <Button variant="outline" size="sm" className="ml-auto gap-1.5" disabled={sorted.length === 0} onClick={exportExcel}>
+          <Download className="h-4 w-4" />
+          Excel
+        </Button>
       </div>
 
       <Card>
