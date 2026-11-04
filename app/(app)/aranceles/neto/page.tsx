@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyBlock, ErrorBlock, LoadingBlock, inputClass } from '@/components/aranceles/shared';
+import { EmptyBlock, ErrorBlock, LoadingBlock } from '@/components/aranceles/shared';
 import {
   EMPTY_REPORT_FILTERS,
   ReportFiltersBar,
@@ -13,7 +13,6 @@ import {
   type ReportFilters,
 } from '@/components/aranceles/report-filters';
 import { currencyLabel, formatDate, formatMoney, formatPeriod } from '@/lib/aranceles/format';
-import { clientKey } from '@/lib/aranceles/history';
 import {
   NET_ALYCS,
   NET_BUCKETS,
@@ -21,7 +20,6 @@ import {
   sumNetLines,
   type NetAlyc,
   type NetBlock,
-  type NetClientTotal,
   type NetLine,
   type NetReport,
   type NetTotals,
@@ -451,156 +449,6 @@ function PersonaTotals({ report }: { report: NetReport }) {
   );
 }
 
-function compareClients(a: NetClientTotal, b: NetClientTotal, currencies: readonly string[]): number {
-  for (const c of currencies) {
-    const diff = (b.aPagar[c] ?? 0) - (a.aPagar[c] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return a.name.localeCompare(b.name, 'es');
-}
-
-/** Todo el rango: a pagar por cliente y moneda; al hacer clic, por broker y tipo de arancel. */
-function ClientTotals({ report }: { report: NetReport }) {
-  const { open, toggle } = useToggleSet();
-  const [search, setSearch] = useState('');
-  const currencies = report.byCurrency.map((c) => c.currency);
-  const q = clientKey(search);
-  const rows = report.clients
-    .filter((c) => !q || clientKey(c.name).includes(q) || clientKey(c.key).includes(q))
-    .sort((a, b) => compareClients(a, b, currencies));
-  if (report.clients.length === 0) return null;
-
-  const amountCells = (v: Record<string, number>, variant: RowVariant = 'row') =>
-    currencies.map((c) => (
-      <td
-        key={c}
-        className={cn(
-          TD,
-          'text-right tabular-nums',
-          PAY_CELL,
-          variant === 'sub' ? 'font-normal' : 'font-semibold',
-          variant === 'total' && 'text-[15px]'
-        )}
-      >
-        {money(v[c] ?? 0, c)}
-      </td>
-    ));
-
-  return (
-    <Card>
-      <CardHeader className="space-y-3 pb-2">
-        <div>
-          <CardTitle className="text-lg">Total a pagar por cliente</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Todo el rango elegido, sumando IEB y GMA. Hacé clic en un cliente para ver el tipo de arancel.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className={`${inputClass} w-full sm:w-56`}
-            placeholder="Buscar cliente…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Buscar cliente"
-          />
-          <span className="text-xs text-muted-foreground">
-            {rows.length.toLocaleString('es-AR')} de {report.clients.length.toLocaleString('es-AR')} clientes
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent className="overflow-auto">
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Ningún cliente coincide con la búsqueda.</p>
-        ) : (
-          <div className="max-h-[520px] overflow-auto rounded-lg border">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead className="sticky top-0 z-10 border-b bg-card text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className={cn(TH, 'text-left')}>Cliente</th>
-                  <th className={cn(TH, 'text-right')}>Operaciones</th>
-                  {currencies.map((c) => (
-                    <th key={c} className={cn(TH, 'text-right font-semibold', PAY_CELL)}>
-                      A pagar {currencyLabel(c)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((c) => {
-                  const expandable = c.byTipo.length > 1;
-                  const isOpen = open.has(c.key);
-                  const alycs = [...new Set(c.byTipo.map((t) => t.alyc))];
-                  return (
-                    <Fragment key={c.key || c.name}>
-                      <tr
-                        className={cn(
-                          'border-b border-border/60',
-                          expandable && 'cursor-pointer hover:bg-muted/50',
-                          isOpen && 'bg-muted/40'
-                        )}
-                        onClick={expandable ? () => toggle(c.key) : undefined}
-                      >
-                        <td className={cn(TD, 'font-medium')}>
-                          <span className="inline-flex flex-wrap items-center gap-1.5">
-                            <Expander open={isOpen} visible={expandable} />
-                            <Link
-                              href={`/aranceles/por-cliente/${encodeURIComponent(c.key)}`}
-                              className="hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {c.name}
-                            </Link>
-                            {expandable && !isOpen && <CountPill>{c.byTipo.length} tipos</CountPill>}
-                            {alycs.length > 1 &&
-                              alycs.map((a) => <AlycBadge key={a} alyc={a} />)}
-                          </span>
-                        </td>
-                        <td className={cn(TD, 'text-right tabular-nums text-muted-foreground')}>
-                          {c.rows.toLocaleString('es-AR')}
-                        </td>
-                        {amountCells(c.aPagar)}
-                      </tr>
-                      {isOpen &&
-                        c.byTipo.map((t, i) => (
-                          <tr
-                            key={t.key}
-                            className={cn(
-                              'text-[13px] bg-muted/30',
-                              i === c.byTipo.length - 1 && 'border-b border-border/60'
-                            )}
-                          >
-                            <td className={cn(TD, 'py-1.5 pl-10')} colSpan={2}>
-                              <span className="inline-flex items-center gap-2">
-                                <AlycBadge alyc={t.alyc} />
-                                {t.label}
-                                <span className="text-xs text-muted-foreground">{t.rows.toLocaleString('es-AR')} op.</span>
-                              </span>
-                            </td>
-                            {amountCells(t.aPagar, 'sub')}
-                          </tr>
-                        ))}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              {!q && rows.length > 1 && (
-                <tfoot className="sticky bottom-0 z-10">
-                  <tr className="border-t-2 border-foreground/20 bg-muted/60 font-semibold">
-                    <td className={cn(TD, 'py-2.5')} colSpan={2}>
-                      Total
-                    </td>
-                    {amountCells(Object.fromEntries(report.byCurrency.map((c) => [c.currency, c.aPagar])), 'total')}
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 /** Resumen de un período: una fila por moneda con lo que paga cada broker. */
 function PeriodSummary({ blocks }: { blocks: NetBlock[] }) {
   const alycs = NET_ALYCS.filter((a) => blocks.some((b) => b.byAlyc.some((x) => x.alyc === a)));
@@ -774,7 +622,6 @@ export default function ArancelesTotalesNetosPage() {
       {report && report.blocks.length > 0 && (
         <div className={cn('space-y-6', loading && 'opacity-60 transition-opacity')}>
           <TotalsSummary report={report} />
-          <ClientTotals report={report} />
           <PersonaTotals report={report} />
 
           <div className="flex justify-end">
