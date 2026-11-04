@@ -17,6 +17,7 @@ const bucketRule = z.object({
   iva_pesos: divisor,
   iva_dolares: divisor,
   aplica_iibb: z.boolean().optional(),
+  lleva_iva: z.boolean().optional(),
 });
 
 const settingsSchema = z.object({
@@ -29,7 +30,6 @@ const settingsSchema = z.object({
         buckets: z.object(Object.fromEntries(NET_BUCKETS.map((b) => [b, bucketRule])) as Record<string, typeof bucketRule>),
         gma: z.object({
           iibb_rate: rate,
-          lleva_iva: z.boolean().optional(),
           buckets: z.object(Object.fromEntries(GMA_BUCKETS.map((b) => [b, bucketRule])) as Record<string, typeof bucketRule>),
         }),
         notes: text,

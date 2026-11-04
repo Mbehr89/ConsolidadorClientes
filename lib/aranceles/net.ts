@@ -289,13 +289,17 @@ export function netAmountOf(c: ArancelCommission, settings: ArancelesSettings): 
   return r && 'aPagar' in r ? r.aPagar : null;
 }
 
-/** Factor para la columna con IVA. IEB: divisor del tipo. GMA: 1,21 sólo si el formato está marcado. */
+/** Factor para la columna con IVA. IEB: divisor del tipo. GMA: 1,21 sólo si ese tipo de instrumento está marcado. */
 export function ivaFactorOf(c: ArancelCommission, settings: ArancelesSettings = defaultSettings()): number {
   const placement = netPlacement(c);
   if (!placement || placement.bucket == null) return 1;
   const rule = ruleFor(settings, c.trade_date);
   const currency = c.commission_currency || c.currency;
-  if (netAlycOf(c.alyc) === 'GMA') return rule.gma.lleva_iva ? GMA_IVA_FACTOR : 1;
+  if (netAlycOf(c.alyc) === 'GMA') {
+    const bucket = placement.bucket;
+    if (bucket !== 'privado' && bucket !== 'publico' && bucket !== 'diferencia' && bucket !== 'caucion') return 1;
+    return rule.gma.buckets[bucket].lleva_iva ? GMA_IVA_FACTOR : 1;
+  }
   if (placement.bucket === 'caucion') return 1;
   return ivaDivisor(placement.bucket, currency, rule);
 }

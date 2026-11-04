@@ -105,8 +105,7 @@ function AlycRulesBlock({
   rows,
   onRow,
   onAllShares,
-  llevaIva,
-  onLlevaIva,
+  showLlevaIva = false,
 }: {
   title: string;
   shareLabel: string;
@@ -115,9 +114,8 @@ function AlycRulesBlock({
   rows: RuleRow[];
   onRow: (key: string, patch: Partial<BucketRule>) => void;
   onAllShares?: (v: number) => void;
-  /** GMA: el archivo viene sin IVA. Si está marcado, la columna con IVA multiplica por 1,21. */
-  llevaIva?: boolean;
-  onLlevaIva?: (v: boolean) => void;
+  /** GMA: cada tipo de instrumento se marca aparte. El archivo siempre se lee sin IVA. */
+  showLlevaIva?: boolean;
 }) {
   const shares = new Set(rows.map((x) => x.rule.share));
   return (
@@ -139,25 +137,20 @@ function AlycRulesBlock({
             />
           </label>
         )}
-        {onLlevaIva && (
-          <label className="flex items-center gap-2 self-center text-xs text-foreground">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-[hsl(var(--primary))]"
-              checked={llevaIva === true}
-              aria-label="GMA lleva IVA"
-              onChange={(e) => onLlevaIva(e.target.checked)}
-            />
-            Lleva IVA (× 1,21 en la columna con IVA)
-          </label>
-        )}
       </div>
+      {showLlevaIva && (
+        <p className="text-xs text-muted-foreground">
+          El Excel de GMA siempre trae el arancel sin IVA, aunque ese instrumento después se cobre con IVA. Marcá cada
+          tipo: si lleva IVA, la columna del resumen multiplica el importe leído por 1,21. El neto a pagar no cambia.
+        </p>
+      )}
       <div className="overflow-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="border-b text-xs uppercase text-muted-foreground">
             <tr>
               <th className="p-2 text-left font-medium">Tipo de arancel {title}</th>
               <th className="p-2 text-center font-medium">Lleva IIBB</th>
+              {showLlevaIva && <th className="p-2 text-center font-medium">Lleva IVA</th>}
               <th className="p-2 text-right font-medium">{shareLabel}</th>
               <th className="p-2 text-left font-medium">IVA hoja pesos</th>
               <th className="p-2 text-left font-medium">IVA hoja dólares</th>
@@ -180,6 +173,17 @@ function AlycRulesBlock({
                       onChange={(e) => onRow(key, { aplica_iibb: e.target.checked })}
                     />
                   </td>
+                  {showLlevaIva && (
+                    <td className="p-2 text-center">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[hsl(var(--primary))]"
+                        checked={rule.lleva_iva === true}
+                        aria-label={`IVA en ${label}`}
+                        onChange={(e) => onRow(key, { lleva_iva: e.target.checked })}
+                      />
+                    </td>
+                  )}
                   <td className="p-2">
                     <PctInput className="ml-auto w-28" value={rule.share} onChange={(v) => v != null && onRow(key, { share: v })} />
                   </td>
@@ -234,7 +238,7 @@ function RulesSection({
     <Card>
       <SectionTitle
         title="Alícuotas de liquidación"
-        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. En ambas ALYC: a pagar = (bruto − IIBB) × distribución o retrocesión ÷ IVA. La alícuota de IIBB es de la ALYC, y cada tipo se marca si la lleva o no. IEB: iguales para todos los productores salvo arreglo comercial. GMA se lee sin IVA. Si marcás «Lleva IVA», el resumen multiplica ese importe por 1,21 sólo en la columna con IVA; el neto a pagar no cambia. USD y dólar exterior usan la hoja dólares, pero se informan por separado."
+        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. En ambas ALYC: a pagar = (bruto − IIBB) × distribución o retrocesión ÷ IVA. La alícuota de IIBB es de la ALYC, y cada tipo se marca si la lleva o no. IEB: iguales para todos los productores salvo arreglo comercial. GMA se lee siempre sin IVA; cada tipo de instrumento se marca aparte si en el resumen hay que mostrarlo también con IVA. USD y dólar exterior usan la hoja dólares, pero se informan por separado."
       />
       <CardContent className="space-y-6">
         {sorted.map((r) => (
@@ -285,8 +289,7 @@ function RulesSection({
               shareLabel="Retrocesión"
               iibbRate={r.gma.iibb_rate}
               onIibb={(v) => update(r.id, { gma: { ...r.gma, iibb_rate: v } })}
-              llevaIva={r.gma.lleva_iva}
-              onLlevaIva={(v) => update(r.id, { gma: { ...r.gma, lleva_iva: v } })}
+              showLlevaIva
               rows={GMA_BUCKETS.map((b) => ({ key: b, label: GMA_BUCKET_LABEL[b], rule: r.gma.buckets[b] }))}
               onRow={(b, patch) => updateGma(r, [b as GmaBucket], patch)}
               onAllShares={(v) => updateGma(r, GMA_BUCKETS, { share: v })}

@@ -4,6 +4,7 @@ import { buildNetReport, commissionWithIva, computeNetLine, netAmountOf, netPlac
 import { detectAccountChanges, summarizeProducers } from '@/lib/aranceles/producers';
 import {
   DEFAULT_NET_RULES,
+  GMA_BUCKETS,
   coerceSettings,
   defaultSettings,
   personAlias,
@@ -201,7 +202,7 @@ describe('aranceles: neto IEB (calculadora)', () => {
     const gma = s.net_rules[0]!.gma;
     expect(gma.iibb_rate).toBe(0);
     expect(Object.values(gma.buckets)).toEqual(
-      Array(4).fill({ share: 0.55, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true })
+      Array(4).fill({ share: 0.55, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true, lleva_iva: false })
     );
     expect('gma_share' in s.net_rules[0]!).toBe(false);
   });
@@ -423,14 +424,29 @@ describe('aranceles: configuración del neto', () => {
     expect(commissionWithIva(ars, base)).toBe(100);
     expect(commissionWithIva(usd, base)).toBe(50);
     expect(netAmountOf(ars, base)).toBeCloseTo(60, 10);
+    const gma = base.net_rules[0]!.gma;
     const conIva: ArancelesSettings = {
       ...base,
-      net_rules: [{ ...base.net_rules[0]!, gma: { ...base.net_rules[0]!.gma, lleva_iva: true } }],
+      net_rules: [
+        {
+          ...base.net_rules[0]!,
+          gma: { ...gma, buckets: { ...gma.buckets, privado: { ...gma.buckets.privado, lleva_iva: true } } },
+        },
+      ],
     };
     expect(commissionWithIva(ars, conIva)).toBeCloseTo(121, 10);
-    expect(commissionWithIva(usd, conIva)).toBeCloseTo(60.5, 10);
+    expect(commissionWithIva(usd, conIva)).toBe(50);
     expect(netAmountOf(ars, conIva)).toBeCloseTo(60, 10);
-    expect(coerceSettings({ net_rules: [base.net_rules[0]!] }).net_rules[0]!.gma.lleva_iva).toBe(false);
+    const sinMarca = Object.fromEntries(
+      GMA_BUCKETS.map((b) => {
+        const { lleva_iva: _omit, ...rest } = gma.buckets[b];
+        return [b, rest];
+      })
+    );
+    const migrated = coerceSettings({
+      net_rules: [{ ...base.net_rules[0]!, gma: { iibb_rate: gma.iibb_rate, lleva_iva: true, buckets: sinMarca } }],
+    });
+    expect(GMA_BUCKETS.every((b) => migrated.net_rules[0]!.gma.buckets[b].lleva_iva)).toBe(true);
   });
 
   it('el arancel con IVA usa el divisor del tipo y de la hoja; sin IVA queda igual', () => {

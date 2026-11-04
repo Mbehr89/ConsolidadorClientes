@@ -30,6 +30,11 @@ export type BucketRule = {
   iva_dolares: number;
   /** Si este tipo descuenta la alícuota de IIBB de la ALYC. Ausente = sí, para no cambiar liquidaciones ya guardadas. */
   aplica_iibb?: boolean;
+  /**
+   * Sólo GMA. El archivo trae el arancel sin IVA. Si es true, la columna «con IVA» multiplica por 1,21.
+   * No cambia el importe leído ni el neto a pagar.
+   */
+  lleva_iva?: boolean;
 };
 
 /** `false` sólo cuando el tipo está marcado como sin IIBB. */
@@ -52,14 +57,13 @@ export const GMA_BUCKET_LABEL: Record<GmaBucket, string> = {
 /** Alícuota de IVA para pasar el bruto sin IVA de GMA a la columna con IVA. */
 export const GMA_IVA_FACTOR = 1.21;
 
-/** GMA: a pagar = (bruto − IIBB) × retrocesión ÷ IVA. El archivo viene sin IVA. */
+/**
+ * GMA: a pagar = (bruto − IIBB) × retrocesión ÷ IVA.
+ * El Excel siempre trae el arancel sin IVA. `lleva_iva` de cada tipo dice si ese instrumento
+ * se muestra también con IVA (importe × 1,21) en el resumen. No cambia la lectura ni el neto.
+ */
 export type GmaRules = {
   iibb_rate: number;
-  /**
-   * El Excel de GMA trae el arancel sin IVA. Si está marcado, la columna «con IVA» del resumen
-   * multiplica ese importe por 1,21. No cambia la lectura ni el neto a pagar.
-   */
-  lleva_iva: boolean;
   buckets: Record<GmaBucket, BucketRule>;
 };
 
@@ -134,9 +138,8 @@ export const DEFAULT_PERSON_ALIASES: PersonAlias[] = [
 export function gmaRulesWithShare(share: number): GmaRules {
   return {
     iibb_rate: 0,
-    lleva_iva: false,
     buckets: Object.fromEntries(
-      GMA_BUCKETS.map((b) => [b, { share, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true }])
+      GMA_BUCKETS.map((b) => [b, { share, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true, lleva_iva: false }])
     ) as Record<GmaBucket, BucketRule>,
   };
 }
@@ -177,13 +180,17 @@ export function coerceSettings(raw: unknown): ArancelesSettings {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<ArancelesSettings>;
   const rules = arr<NetRuleVersion & { gma_share?: unknown }>(r.net_rules).map(({ gma_share, ...v }) => {
     const gmaBase = gmaRulesWithShare(typeof gma_share === 'number' ? gma_share : 0.6);
+    const legacyLlevaIva = (v.gma as { lleva_iva?: unknown } | undefined)?.lleva_iva === true;
     return {
       ...v,
       gma: {
         iibb_rate: typeof v.gma?.iibb_rate === 'number' ? v.gma.iibb_rate : gmaBase.iibb_rate,
-        lleva_iva: v.gma?.lleva_iva === true,
         buckets: Object.fromEntries(
-          GMA_BUCKETS.map((b) => [b, { ...gmaBase.buckets[b], ...(v.gma?.buckets?.[b] ?? {}) }])
+          GMA_BUCKETS.map((b) => {
+            const saved = v.gma?.buckets?.[b];
+            const lleva_iva = typeof saved?.lleva_iva === 'boolean' ? saved.lleva_iva : legacyLlevaIva;
+            return [b, { ...gmaBase.buckets[b], ...saved, lleva_iva }];
+          })
         ) as Record<GmaBucket, BucketRule>,
       },
       buckets: Object.fromEntries(

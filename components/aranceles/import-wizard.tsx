@@ -184,6 +184,13 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
               </span>
             </div>
             {parsed.formatLabel && <Badge variant="secondary">{parsed.formatLabel}</Badge>}
+            {parsed.detectedFormat === 'gma' && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                Este archivo se lee sin IVA: el importe de arancel nunca incluye IVA, aunque ese instrumento después se
+                cobre con IVA. En Configuración marcás, tipo por tipo, cuáles llevan IVA. Esa marca sólo multiplica la
+                columna «Arancel bruto (con IVA)» del resumen.
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               Obligatorio: <strong>Cliente</strong> y <strong>Fecha</strong>. Si falta el arancel, la fila se importa igual y
               aparece en Control.

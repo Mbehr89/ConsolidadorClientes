@@ -226,7 +226,7 @@ export default function ArancelesResumenPage() {
               <Stat
                 label="Aranceles brutos (con IVA)"
                 value={<TotalsStack totals={data.totalsWithIva} align="start" className="text-base" />}
-                hint="IEB usa el IVA de cada tipo. GMA se multiplica por 1,21 sólo si en Configuración está marcado «Lleva IVA»."
+                hint="GMA se lee sin IVA. La columna con IVA multiplica por 1,21 sólo los tipos de instrumento marcados en Configuración."
               />
             )}
             <Stat label="Operaciones" value={formatNumber(data.summary.rowCount)} />
