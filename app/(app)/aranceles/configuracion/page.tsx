@@ -114,14 +114,13 @@ function AlycRulesBlock({
   onRow: (key: string, patch: Partial<BucketRule>) => void;
   onAllShares?: (v: number) => void;
 }) {
-  const neto = 1 - iibbRate;
   const shares = new Set(rows.map((x) => x.rule.share));
   return (
     <div className="space-y-2 rounded-md bg-muted/30 p-3">
       <div className="flex flex-wrap items-end gap-3">
         <p className="mr-2 self-center text-sm font-semibold">{title}</p>
         <label className="space-y-1 text-xs text-muted-foreground">
-          IIBB (sobre el bruto)
+          Alícuota IIBB
           <PctInput className="w-28" value={iibbRate} onChange={(v) => v != null && onIibb(v)} />
         </label>
         {onAllShares && (
@@ -137,10 +136,11 @@ function AlycRulesBlock({
         )}
       </div>
       <div className="overflow-auto">
-        <table className="w-full min-w-[620px] text-sm">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="border-b text-xs uppercase text-muted-foreground">
             <tr>
               <th className="p-2 text-left font-medium">Tipo de arancel {title}</th>
+              <th className="p-2 text-center font-medium">Lleva IIBB</th>
               <th className="p-2 text-right font-medium">{shareLabel}</th>
               <th className="p-2 text-left font-medium">IVA hoja pesos</th>
               <th className="p-2 text-left font-medium">IVA hoja dólares</th>
@@ -149,22 +149,34 @@ function AlycRulesBlock({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ key, label, rule }) => (
-              <tr key={key} className="border-b border-border/50 last:border-0">
-                <td className="p-2">{label}</td>
-                <td className="p-2">
-                  <PctInput className="ml-auto w-28" value={rule.share} onChange={(v) => v != null && onRow(key, { share: v })} />
-                </td>
-                <td className="p-2">
-                  <IvaSelect value={rule.iva_pesos} onChange={(v) => onRow(key, { iva_pesos: v })} />
-                </td>
-                <td className="p-2">
-                  <IvaSelect value={rule.iva_dolares} onChange={(v) => onRow(key, { iva_dolares: v })} />
-                </td>
-                <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * rule.share) / rule.iva_pesos)}</td>
-                <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * rule.share) / rule.iva_dolares)}</td>
-              </tr>
-            ))}
+            {rows.map(({ key, label, rule }) => {
+              const neto = rule.aplica_iibb === false ? 1 : 1 - iibbRate;
+              return (
+                <tr key={key} className="border-b border-border/50 last:border-0">
+                  <td className="p-2">{label}</td>
+                  <td className="p-2 text-center">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[hsl(var(--primary))]"
+                      checked={rule.aplica_iibb !== false}
+                      aria-label={`IIBB en ${label}`}
+                      onChange={(e) => onRow(key, { aplica_iibb: e.target.checked })}
+                    />
+                  </td>
+                  <td className="p-2">
+                    <PctInput className="ml-auto w-28" value={rule.share} onChange={(v) => v != null && onRow(key, { share: v })} />
+                  </td>
+                  <td className="p-2">
+                    <IvaSelect value={rule.iva_pesos} onChange={(v) => onRow(key, { iva_pesos: v })} />
+                  </td>
+                  <td className="p-2">
+                    <IvaSelect value={rule.iva_dolares} onChange={(v) => onRow(key, { iva_dolares: v })} />
+                  </td>
+                  <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * rule.share) / rule.iva_pesos)}</td>
+                  <td className="p-2 text-right tabular-nums text-muted-foreground">{pct((neto * rule.share) / rule.iva_dolares)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -205,7 +217,7 @@ function RulesSection({
     <Card>
       <SectionTitle
         title="Alícuotas de liquidación"
-        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. En ambas ALYC: a pagar = (bruto − IIBB) × distribución o retrocesión ÷ IVA. IEB: iguales para todos los productores salvo arreglo comercial. GMA: hoy sin IIBB ni IVA (dejá 0% y «Sin IVA» mientras no haga falta). USD y dólar exterior usan la hoja dólares, pero se informan por separado."
+        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. En ambas ALYC: a pagar = (bruto − IIBB) × distribución o retrocesión ÷ IVA. La alícuota de IIBB es de la ALYC, y cada tipo se marca si la lleva o no. IEB: iguales para todos los productores salvo arreglo comercial. GMA: hoy sin IIBB ni IVA (dejá 0% y «Sin IVA» mientras no haga falta). USD y dólar exterior usan la hoja dólares, pero se informan por separado."
       />
       <CardContent className="space-y-6">
         {sorted.map((r) => (

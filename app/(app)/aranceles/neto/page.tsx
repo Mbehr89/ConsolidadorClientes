@@ -24,7 +24,13 @@ import {
   type NetReport,
   type NetTotals,
 } from '@/lib/aranceles/net';
-import { GMA_BUCKETS, GMA_BUCKET_LABEL, type BucketRule, type NetRuleVersion } from '@/lib/aranceles/settings';
+import {
+  GMA_BUCKETS,
+  GMA_BUCKET_LABEL,
+  appliesIibb,
+  type BucketRule,
+  type NetRuleVersion,
+} from '@/lib/aranceles/settings';
 import { cn } from '@/lib/utils';
 
 function pct(v: number): string {
@@ -539,7 +545,14 @@ function bucketRuleText(label: string, r: BucketRule): string {
         : r.iva_dolares !== 1
           ? ` ÷ ${r.iva_dolares.toLocaleString('es-AR')} sólo en dólares`
           : '';
-  return `${label} ${pct(r.share)}${iva}`;
+  return `${label} ${pct(r.share)}${iva}${appliesIibb(r) ? '' : ' sin IIBB'}`;
+}
+
+function exceptIibb<T extends string>(keys: readonly T[], applies: (key: T) => boolean, label: (key: T) => string): string {
+  const skipped = keys.filter((k) => !applies(k)).map(label);
+  if (skipped.length === 0) return '';
+  if (skipped.length === keys.length) return ' Sin IIBB en ningún tipo.';
+  return ` Salvo ${skipped.join(', ')}, que no llevan IIBB.`;
 }
 
 function gmaRulesText(rules: NetRuleVersion): string {
@@ -550,7 +563,12 @@ function gmaRulesText(rules: NetRuleVersion): string {
     return `a pagar = ${pct(list[0]!.share)} del bruto (sin IIBB ni IVA).`;
   }
   const detail = GMA_BUCKETS.map((b) => bucketRuleText(GMA_BUCKET_LABEL[b], buckets[b])).join(' · ');
-  return `IIBB = ${pct(iibb_rate)} del bruto · A pagar = (bruto − IIBB) × retrocesión ÷ IVA. ${detail}.`;
+  const salvo = exceptIibb(
+    GMA_BUCKETS,
+    (b) => appliesIibb(buckets[b]),
+    (b) => GMA_BUCKET_LABEL[b]
+  );
+  return `IIBB = ${pct(iibb_rate)} del bruto${salvo} · A pagar = (bruto − IIBB) × retrocesión ÷ IVA. ${detail}.`;
 }
 
 function RulesCard({ report }: { report: NetReport | undefined }) {
@@ -570,8 +588,9 @@ function RulesCard({ report }: { report: NetReport | undefined }) {
         </p>
         <p>
           <span className="font-medium text-foreground">IEB:</span> bruto ajustado = bruto + notas de débito/crédito
-          (con su signo, en el tipo que indica su especie) · IIBB = {pct(rules.iibb_rate)} del bruto ajustado ·
-          Comisión neta = bruto ajustado − IIBB · A pagar = comisión neta × distribución ÷ IVA.
+          (con su signo, en el tipo que indica su especie) · IIBB = {pct(rules.iibb_rate)} del bruto ajustado
+          {exceptIibb(NET_BUCKETS, (b) => appliesIibb(rules.buckets[b]), (b) => NET_BUCKET_LABEL[b])} · Comisión neta =
+          bruto ajustado − IIBB · A pagar = comisión neta × distribución ÷ IVA.
         </p>
         <p>{NET_BUCKETS.map((b) => bucketRuleText(NET_BUCKET_LABEL[b], rules.buckets[b])).join(' · ')}</p>
         {(report.ruleVersionsUsed > 1 || report.agreementRows > 0) && (

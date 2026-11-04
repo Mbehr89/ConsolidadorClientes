@@ -28,7 +28,14 @@ export type BucketRule = {
   iva_pesos: number;
   /** Divisor de IVA en la hoja dólares (USD y USD exterior). */
   iva_dolares: number;
+  /** Si este tipo descuenta la alícuota de IIBB de la ALYC. Ausente = sí, para no cambiar liquidaciones ya guardadas. */
+  aplica_iibb?: boolean;
 };
+
+/** `false` sólo cuando el tipo está marcado como sin IIBB. */
+export function appliesIibb(rule: Pick<BucketRule, 'aplica_iibb'> | undefined): boolean {
+  return rule?.aplica_iibb !== false;
+}
 
 /** Categorías en que se liquida GMA. */
 export type GmaBucket = 'privado' | 'publico' | 'diferencia' | 'caucion';
@@ -119,10 +126,9 @@ export const DEFAULT_PERSON_ALIASES: PersonAlias[] = [
 export function gmaRulesWithShare(share: number): GmaRules {
   return {
     iibb_rate: 0,
-    buckets: Object.fromEntries(GMA_BUCKETS.map((b) => [b, { share, iva_pesos: 1, iva_dolares: 1 }])) as Record<
-      GmaBucket,
-      BucketRule
-    >,
+    buckets: Object.fromEntries(
+      GMA_BUCKETS.map((b) => [b, { share, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true }])
+    ) as Record<GmaBucket, BucketRule>,
   };
 }
 
@@ -131,12 +137,12 @@ export const DEFAULT_NET_RULES: NetRuleVersion = {
   valid_from: '2000-01-01',
   iibb_rate: 0.055,
   buckets: {
-    privado: { share: 0.65, iva_pesos: 1, iva_dolares: 1 },
-    publico: { share: 0.65, iva_pesos: 1, iva_dolares: 1 },
-    licitacion: { share: 0.65, iva_pesos: 1, iva_dolares: 1 },
-    diferencia: { share: 0.65, iva_pesos: 1.21, iva_dolares: 1 },
-    fci_terceros: { share: 0.65, iva_pesos: 1.21, iva_dolares: 1.21 },
-    fci_ieb: { share: 0.7, iva_pesos: 1, iva_dolares: 1 },
+    privado: { share: 0.65, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true },
+    publico: { share: 0.65, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true },
+    licitacion: { share: 0.65, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true },
+    diferencia: { share: 0.65, iva_pesos: 1.21, iva_dolares: 1, aplica_iibb: true },
+    fci_terceros: { share: 0.65, iva_pesos: 1.21, iva_dolares: 1.21, aplica_iibb: true },
+    fci_ieb: { share: 0.7, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true },
   },
   gma: gmaRulesWithShare(0.6),
   notes: 'IEB: planilla "calculadora aranceles IEB" (licitaciones con las reglas de títulos públicos). GMA: 60% del bruto.',

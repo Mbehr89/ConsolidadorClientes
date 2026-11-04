@@ -12,7 +12,12 @@ const rate = z.number().min(0).max(1);
 const divisor = z.number().min(1).max(2);
 const text = z.string().trim().max(500).nullable();
 
-const bucketRule = z.object({ share: rate, iva_pesos: divisor, iva_dolares: divisor });
+const bucketRule = z.object({
+  share: rate,
+  iva_pesos: divisor,
+  iva_dolares: divisor,
+  aplica_iibb: z.boolean().optional(),
+});
 
 const settingsSchema = z.object({
   net_rules: z

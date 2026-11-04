@@ -200,7 +200,9 @@ describe('aranceles: neto IEB (calculadora)', () => {
     const s = coerceSettings({ net_rules: [{ ...old, gma_share: 0.55 }] });
     const gma = s.net_rules[0]!.gma;
     expect(gma.iibb_rate).toBe(0);
-    expect(Object.values(gma.buckets)).toEqual(Array(4).fill({ share: 0.55, iva_pesos: 1, iva_dolares: 1 }));
+    expect(Object.values(gma.buckets)).toEqual(
+      Array(4).fill({ share: 0.55, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true })
+    );
     expect('gma_share' in s.net_rules[0]!).toBe(false);
   });
 
@@ -353,9 +355,65 @@ describe('aranceles: configuración del neto', () => {
     expect(coerceSettings({}).person_aliases.map((a) => a.alias)).toEqual(['MILI', 'MARTIN', 'CLAUDIO']);
   });
 
+  it('un tipo marcado sin IIBB no descuenta la alícuota; el resto sí', () => {
+    const base = defaultSettings();
+    const rule = base.net_rules[0]!;
+    const settings: ArancelesSettings = {
+      ...base,
+      net_rules: [
+        {
+          ...rule,
+          buckets: {
+            ...rule.buckets,
+            fci_ieb: { ...rule.buckets.fci_ieb, aplica_iibb: false },
+          },
+          gma: {
+            iibb_rate: 0.05,
+            buckets: {
+              ...rule.gma.buckets,
+              caucion: { ...rule.gma.buckets.caucion, aplica_iibb: false },
+            },
+          },
+        },
+      ],
+    };
+    let h = applyImport(emptyHistory(), {
+      alyc: 'IEB',
+      filename: 'priv.xlsx',
+      rows: [row('1', 100, 'ARS', { operation: 'PRIVADO' })],
+      segment: 'aranceles_privado',
+      format: 'ieb',
+    }).history;
+    h = applyImport(h, {
+      alyc: 'IEB',
+      filename: 'acdi.xlsx',
+      rows: [row('2', 100, 'ARS', { operation: 'FCI IEB' })],
+      segment: 'acdi',
+      format: 'ieb',
+    }).history;
+    const full = applyImport(h, {
+      alyc: 'GMA',
+      filename: 'g.xlsx',
+      rows: [
+        row('3', 100, 'ARS', { operation: 'VENTA', instrument: 'AL30' }),
+        row('4', 100, 'ARS', { operation: 'APTOMFUTC' }),
+      ],
+      format: 'gma',
+    }).history;
+    const privado = netAmountOf(full.commissions.find((c) => c.op_number === '1')!, settings);
+    const fci = netAmountOf(full.commissions.find((c) => c.op_number === '2')!, settings);
+    const publico = netAmountOf(full.commissions.find((c) => c.op_number === '3')!, settings);
+    const caucion = netAmountOf(full.commissions.find((c) => c.op_number === '4')!, settings);
+    expect(privado).toBeCloseTo(100 * 0.945 * 0.65, 10);
+    expect(fci).toBeCloseTo(100 * 0.7, 10);
+    expect(publico).toBeCloseTo(95 * 0.6, 10);
+    expect(caucion).toBeCloseTo(100 * 0.6, 10);
+  });
+
   it('coerceSettings completa tipos faltantes con la planilla', () => {
     const s = coerceSettings({ net_rules: [{ ...DEFAULT_NET_RULES, buckets: { privado: { share: 0.5, iva_pesos: 1, iva_dolares: 1 } } }] });
     expect(s.net_rules[0]!.buckets.privado.share).toBe(0.5);
+    expect(s.net_rules[0]!.buckets.privado.aplica_iibb).toBe(true);
     expect(s.net_rules[0]!.buckets.licitacion).toEqual(DEFAULT_NET_RULES.buckets.publico);
   });
 });

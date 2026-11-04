@@ -6,6 +6,7 @@ import {
   NET_BUCKETS,
   NET_BUCKET_LABEL,
   agreementFor,
+  appliesIibb,
   currentRule,
   defaultSettings,
   producerLabel,
@@ -188,7 +189,8 @@ export function computeNetLine(
   rule: NetRuleVersion = DEFAULT_NET_RULES
 ): NetLine {
   const brutoAjustado = bruto + notas;
-  const iibb = brutoAjustado * rule.iibb_rate;
+  const iibbRate = appliesIibb(rule.buckets[bucket]) ? rule.iibb_rate : 0;
+  const iibb = brutoAjustado * iibbRate;
   const neto = brutoAjustado - iibb;
   const share = rule.buckets[bucket].share;
   const div = ivaDivisor(bucket, currency, rule);
@@ -205,7 +207,7 @@ export function computeNetLine(
     neto,
     share,
     ivaDivisor: div,
-    iibbRate: rule.iibb_rate,
+    iibbRate,
     aPagar: (neto * share) / div,
     rows,
     withAgreement: 0,
@@ -240,7 +242,8 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
   if (netAlycOf(c.alyc) === 'GMA') {
     const g = rule.gma.buckets[gmaBucketOf(c)];
     const iva = netSheet(currency) === 'pesos' ? g.iva_pesos : g.iva_dolares;
-    const iibb = amount * rule.gma.iibb_rate;
+    const iibbRate = appliesIibb(g) ? rule.gma.iibb_rate : 0;
+    const iibb = amount * iibbRate;
     const neto = amount - iibb;
     return {
       alyc: 'GMA',
@@ -251,7 +254,7 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
       aPagar: (neto * g.share) / iva,
       share: g.share,
       iva,
-      iibbRate: rule.gma.iibb_rate,
+      iibbRate,
       agreement: false,
       ruleId: rule.id,
     };
@@ -261,7 +264,8 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
   const agreement = agreementFor(settings, producerOf(c, settings), c.trade_date);
   const share = agreement?.shares[bucket] ?? rule.buckets[bucket].share;
   const iva = ivaDivisor(bucket, currency, rule);
-  const iibb = amount * rule.iibb_rate;
+  const iibbRate = appliesIibb(rule.buckets[bucket]) ? rule.iibb_rate : 0;
+  const iibb = amount * iibbRate;
   const neto = amount - iibb;
   return {
     alyc: 'IEB',
@@ -272,7 +276,7 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
     aPagar: (neto * share) / iva,
     share,
     iva,
-    iibbRate: rule.iibb_rate,
+    iibbRate,
     agreement: agreement?.shares[bucket] != null,
     ruleId: rule.id,
   };
