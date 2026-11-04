@@ -40,8 +40,19 @@ import {
 import { cn } from '@/lib/utils';
 
 const DEFAULT_SORT: ControlSort = { by: 'estado', dir: 'asc' };
-/** Primer clic: fecha de la más nueva a la más vieja; boleto de menor a mayor. */
-const FIRST_DIR: Record<ControlSortKey, ControlSort['dir']> = { estado: 'asc', fecha: 'desc', boleto: 'asc' };
+/** Primer clic: fechas y montos de mayor a menor; textos y boleto de la A a la Z. */
+const FIRST_DIR: Record<ControlSortKey, ControlSort['dir']> = {
+  estado: 'asc',
+  fecha: 'desc',
+  boleto: 'asc',
+  alyc: 'asc',
+  manager: 'asc',
+  cliente: 'asc',
+  operacion: 'asc',
+  instrumento: 'asc',
+  bruto: 'desc',
+  cobrado: 'desc',
+};
 
 type ControlResponse = {
   alycs: { name: string; rows: number }[];
@@ -59,23 +70,33 @@ function SortHeader({
   label,
   sort,
   onSort,
+  align = 'left',
 }: {
   by: ControlSortKey;
   label: string;
   sort: ControlSort;
   onSort: (by: ControlSortKey) => void;
+  align?: 'left' | 'right';
 }) {
   const active = sort.by === by;
   const Icon = !active || by === 'estado' ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown;
   return (
-    <th className="p-2 text-left font-medium" aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+    <th
+      className={cn('p-2 font-medium', align === 'right' ? 'text-right' : 'text-left')}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
       <button
         type="button"
-        className={cn('inline-flex items-center gap-1 uppercase hover:text-foreground', active && 'text-foreground')}
+        className={cn(
+          'inline-flex items-center gap-1 uppercase hover:text-foreground',
+          align === 'right' && 'w-full justify-end',
+          active && 'text-foreground'
+        )}
+        aria-label={`Ordenar por ${label}`}
         onClick={() => onSort(by)}
       >
         {label}
-        <Icon className={cn('h-3.5 w-3.5', !active && 'opacity-40')} />
+        <Icon className={cn('h-3.5 w-3.5 shrink-0', !active && 'opacity-40')} />
       </button>
     </th>
   );
@@ -536,13 +557,13 @@ export default function ArancelesControlPage() {
                         <SortHeader by="estado" label="Estado" sort={sort} onSort={onSort} />
                         <SortHeader by="fecha" label="Fecha" sort={sort} onSort={onSort} />
                         <SortHeader by="boleto" label="Boleto" sort={sort} onSort={onSort} />
-                        <th className="p-2 text-left font-medium">ALYC</th>
-                        <th className="p-2 text-left font-medium">Productor / Manager</th>
-                        <th className="p-2 text-left font-medium">Cliente</th>
-                        <th className="p-2 text-left font-medium">Operación</th>
-                        <th className="p-2 text-left font-medium">Instrumento</th>
-                        <th className="p-2 text-right font-medium">Bruto</th>
-                        <th className="p-2 text-right font-medium">Cobrado</th>
+                        <SortHeader by="alyc" label="ALYC" sort={sort} onSort={onSort} />
+                        <SortHeader by="manager" label="Productor / Manager" sort={sort} onSort={onSort} />
+                        <SortHeader by="cliente" label="Cliente" sort={sort} onSort={onSort} />
+                        <SortHeader by="operacion" label="Operación" sort={sort} onSort={onSort} />
+                        <SortHeader by="instrumento" label="Instrumento" sort={sort} onSort={onSort} />
+                        <SortHeader by="bruto" label="Bruto" sort={sort} onSort={onSort} align="right" />
+                        <SortHeader by="cobrado" label="Cobrado" sort={sort} onSort={onSort} align="right" />
                         <th className="p-2 text-right font-medium" title="Fijo o mínimo habitual del cliente / ALYC">
                           Referencia
                         </th>

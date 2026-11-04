@@ -1,5 +1,6 @@
 import { operationCategory } from '@/lib/aranceles/categories';
 import { isAnomaly } from '@/lib/aranceles/fees';
+import { compareOpNumber, compareOperations, type OperationSortKey } from '@/lib/aranceles/operation-sort';
 import { tradingSide } from '@/lib/aranceles/trading';
 import { FEE_STATUS_LABEL, type ArancelCommission, type FeeStatus } from '@/lib/aranceles/types';
 
@@ -44,17 +45,20 @@ export function controlStatus(c: ArancelCommission): ControlStatus | null {
   return null;
 }
 
-export type ControlSortKey = 'estado' | 'fecha' | 'boleto';
+export type ControlSortKey = 'estado' | 'cobrado' | Exclude<OperationSortKey, 'arancel' | 'arancel_iva'>;
 export type ControlSort = { by: ControlSortKey; dir: 'asc' | 'desc' };
-export const CONTROL_SORT_KEYS: readonly ControlSortKey[] = ['estado', 'fecha', 'boleto'];
-
-const opNumberCollator = new Intl.Collator('es', { numeric: true });
-
-/** N° de boleto como número ("998" < "1002"); los que no tienen n° van siempre al final. */
-function compareOpNumber(a: string | null, b: string | null, sign: number): number {
-  if (a == null || b == null) return Number(a == null) - Number(b == null);
-  return sign * opNumberCollator.compare(a, b);
-}
+export const CONTROL_SORT_KEYS: readonly ControlSortKey[] = [
+  'estado',
+  'fecha',
+  'boleto',
+  'alyc',
+  'manager',
+  'cliente',
+  'operacion',
+  'instrumento',
+  'bruto',
+  'cobrado',
+];
 
 export type ControlRow<T extends ArancelCommission = ArancelCommission> = T & { control_status: ControlStatus };
 
@@ -63,23 +67,20 @@ export function listControlRows<T extends ArancelCommission>(
   sort: ControlSort = { by: 'estado', dir: 'asc' },
   status: ControlStatus | null = null
 ): ControlRow<T>[] {
-  const sign = sort.dir === 'asc' ? 1 : -1;
   const out: ControlRow<T>[] = [];
   for (const c of rows) {
     const s = controlStatus(c);
     if (s && (!status || s === status)) out.push({ ...c, control_status: s });
   }
   return out.sort((a, b) => {
-    if (sort.by === 'fecha') {
-      return sign * a.trade_date.localeCompare(b.trade_date) || compareOpNumber(a.op_number, b.op_number, sign);
+    if (sort.by === 'estado') {
+      return (
+        CONTROL_STATUSES.indexOf(a.control_status) - CONTROL_STATUSES.indexOf(b.control_status) ||
+        b.trade_date.localeCompare(a.trade_date)
+      );
     }
-    if (sort.by === 'boleto') {
-      return compareOpNumber(a.op_number, b.op_number, sign) || sign * a.trade_date.localeCompare(b.trade_date);
-    }
-    return (
-      CONTROL_STATUSES.indexOf(a.control_status) - CONTROL_STATUSES.indexOf(b.control_status) ||
-      b.trade_date.localeCompare(a.trade_date)
-    );
+    const by: OperationSortKey = sort.by === 'cobrado' ? 'arancel' : sort.by;
+    return compareOperations(a, b, { by, dir: sort.dir });
   });
 }
 

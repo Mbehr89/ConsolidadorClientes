@@ -4,9 +4,9 @@ import {
   listAlycs,
   listClients,
   listMonths,
-  sortByDateDesc,
   summarize,
 } from '@/lib/aranceles/history';
+import { parseOperationSort, sortOperations } from '@/lib/aranceles/operation-sort';
 import { commissionWithIva, netAmountOf } from '@/lib/aranceles/net';
 import { loadSegmentedHistory } from '@/lib/aranceles/segment-store';
 import { coerceSettings } from '@/lib/aranceles/settings';
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
         totalsWithIva[cur] = (totalsWithIva[cur] ?? 0) + commissionWithIva(c, settings);
       }
     }
-    const rows = sortByDateDesc(filtered)
+    const rows = sortOperations(filtered, parseOperationSort(sp.get('sort'), sp.get('dir')))
       .slice(0, limit)
       .map((c) => (measure === 'gross' ? { ...c, commission_con_iva: commissionWithIva(c, settings) } : c));
 

@@ -21,6 +21,12 @@ import { buildClientExport } from '@/lib/aranceles/export-model';
 import { compareFeeTypeLabels } from '@/lib/aranceles/fee-types';
 import { isAnomaly } from '@/lib/aranceles/fees';
 import { formatDate, formatMonth, formatMonthLong, formatNumber } from '@/lib/aranceles/format';
+import {
+  DEFAULT_OPERATION_SORT,
+  sortOperations,
+  toggleOperationSort,
+  type OperationSort,
+} from '@/lib/aranceles/operation-sort';
 import { clientKey, type ArancelesSummary } from '@/lib/aranceles/history';
 import {
   SEGMENT_DIMENSIONS,
@@ -73,6 +79,7 @@ export default function ArancelesClienteDetallePage({
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<OperationSort>(DEFAULT_OPERATION_SORT);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [exporting, setExporting] = useState<'xlsx' | 'pdf' | null>(null);
@@ -82,7 +89,7 @@ export default function ArancelesClienteDetallePage({
     setLoading(true);
     setError(null);
     try {
-      const p = new URLSearchParams({ client: key, limit: String(MAX_ROWS) });
+      const p = new URLSearchParams({ client: key, limit: String(MAX_ROWS), sort: sort.by, dir: sort.dir });
       if (alyc) p.set('alyc', alyc);
       if (from) p.set('from', from);
       if (to) p.set('to', to);
@@ -96,7 +103,7 @@ export default function ArancelesClienteDetallePage({
     } finally {
       setLoading(false);
     }
-  }, [key, alyc, from, to, segments]);
+  }, [key, alyc, from, to, segments, sort]);
 
   useEffect(() => {
     void load();
@@ -106,7 +113,7 @@ export default function ArancelesClienteDetallePage({
 
   const visibleRows = useMemo(() => {
     const q = clientKey(search);
-    return (data?.rows ?? []).filter((r) => {
+    const filtered = (data?.rows ?? []).filter((r) => {
       if (status === 'anomaly' && !isAnomaly(r.fee_status)) return false;
       if (status && status !== 'anomaly' && r.fee_status !== status) return false;
       if (!q) return true;
@@ -117,7 +124,8 @@ export default function ArancelesClienteDetallePage({
       );
       return hay.includes(q);
     });
-  }, [data, search, status]);
+    return sortOperations(filtered, sort);
+  }, [data, search, status, sort]);
 
   const backQuery = new URLSearchParams(
     Object.entries({ alyc, from, to, granularity, ...segments }).filter(([, v]) => v) as [string, string][]
@@ -287,7 +295,13 @@ export default function ArancelesClienteDetallePage({
               {visibleRows.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Sin operaciones con estos filtros.</p>
               ) : (
-                <OperationsTable rows={visibleRows} showClient={false} maxHeightClass="max-h-[640px]" />
+                <OperationsTable
+                  rows={visibleRows}
+                  showClient={false}
+                  maxHeightClass="max-h-[640px]"
+                  sort={sort}
+                  onSort={(by) => setSort((prev) => toggleOperationSort(prev, by))}
+                />
               )}
             </CardContent>
           </Card>

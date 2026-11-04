@@ -22,6 +22,11 @@ import {
   readJson,
 } from '@/components/aranceles/shared';
 import { formatDate, formatMonth, formatNumber, formatTotals } from '@/lib/aranceles/format';
+import {
+  DEFAULT_OPERATION_SORT,
+  toggleOperationSort,
+  type OperationSort,
+} from '@/lib/aranceles/operation-sort';
 import { cn } from '@/lib/utils';
 import type { ArancelesSummary, BreakdownRow } from '@/lib/aranceles/history';
 import {
@@ -72,10 +77,12 @@ const EMPTY_FILTERS: Filters = {
   status: '',
 };
 
-function toQuery(f: Filters, measure: Measure): string {
+function toQuery(f: Filters, measure: Measure, sort: OperationSort): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) if (v.trim()) p.set(k, v.trim());
   p.set('limit', '200');
+  p.set('sort', sort.by);
+  p.set('dir', sort.dir);
   if (measure === 'net') p.set('measure', 'net');
   return p.toString();
 }
@@ -108,6 +115,7 @@ function MeasureToggle({ value, onChange }: { value: Measure; onChange: (m: Meas
 export default function ArancelesResumenPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [measure, setMeasure] = useState<Measure>('gross');
+  const [sort, setSort] = useState<OperationSort>(DEFAULT_OPERATION_SORT);
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +124,7 @@ export default function ArancelesResumenPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/aranceles/summary?${toQuery(filters, measure)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/aranceles/summary?${toQuery(filters, measure, sort)}`, { cache: 'no-store' });
       const json = await readJson<SummaryResponse>(res);
       if (!res.ok) throw new Error(json.error ?? 'Error al cargar el historial');
       setData(json);
@@ -125,7 +133,7 @@ export default function ArancelesResumenPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters, measure]);
+  }, [filters, measure, sort]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 250);
@@ -140,7 +148,13 @@ export default function ArancelesResumenPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {data ? <StorageNote storage={data.storage} updatedAt={data.updatedAt} lastImport={data.lastImport} /> : <span />}
-        <MeasureToggle value={measure} onChange={setMeasure} />
+        <MeasureToggle
+          value={measure}
+          onChange={(m) => {
+            setMeasure(m);
+            if (m === 'net') setSort((prev) => (prev.by === 'arancel_iva' ? DEFAULT_OPERATION_SORT : prev));
+          }}
+        />
       </div>
 
       <Card>
@@ -294,6 +308,8 @@ export default function ArancelesResumenPage() {
                 rows={data.rows}
                 feeLabel={data.measure === 'net' ? 'Neto a pagar' : 'Arancel bruto (sin IVA)'}
                 showFeeWithIva={data.measure === 'gross'}
+                sort={sort}
+                onSort={(by) => setSort((prev) => toggleOperationSort(prev, by))}
               />
             </CardContent>
           </Card>
