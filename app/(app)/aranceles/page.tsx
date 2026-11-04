@@ -44,9 +44,10 @@ type SummaryResponse = {
   months: string[];
   segmentOptions: SegmentOptions;
   summary: ArancelesSummary;
+  totalsWithIva: Record<string, number> | null;
   segments: Record<SegmentDimension, BreakdownRow[]>;
   total: number;
-  rows: SegmentedCommission[];
+  rows: (SegmentedCommission & { commission_con_iva?: number })[];
   measure: Measure;
   withoutNet: { rows: number; totals: Record<string, number> } | null;
 };
@@ -216,11 +217,18 @@ export default function ArancelesResumenPage() {
 
       {data && !isEmpty && (
         <div className={loading ? 'space-y-6 opacity-60 transition-opacity' : 'space-y-6'}>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <Stat
-              label={data.measure === 'net' ? 'Neto a pagar' : 'Aranceles brutos'}
+              label={data.measure === 'net' ? 'Neto a pagar' : 'Aranceles brutos (sin IVA)'}
               value={<TotalsStack totals={data.summary.totals} align="start" className="text-base" />}
             />
+            {data.measure === 'gross' && data.totalsWithIva && (
+              <Stat
+                label="Aranceles brutos (con IVA)"
+                value={<TotalsStack totals={data.totalsWithIva} align="start" className="text-base" />}
+                hint="Según el IVA de cada tipo en Configuración. Si el tipo no lleva IVA, coincide con el bruto."
+              />
+            )}
             <Stat label="Operaciones" value={formatNumber(data.summary.rowCount)} />
             <Stat label="Clientes" value={formatNumber(data.summary.clientCount)} />
             <Stat label="ALYCs" value={formatNumber(data.summary.alycCount)} />
@@ -282,7 +290,11 @@ export default function ArancelesResumenPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <OperationsTable rows={data.rows} feeLabel={data.measure === 'net' ? 'Neto a pagar' : 'Arancel bruto'} />
+              <OperationsTable
+                rows={data.rows}
+                feeLabel={data.measure === 'net' ? 'Neto a pagar' : 'Arancel bruto (sin IVA)'}
+                showFeeWithIva={data.measure === 'gross'}
+              />
             </CardContent>
           </Card>
         </div>

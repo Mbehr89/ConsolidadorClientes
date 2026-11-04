@@ -1,6 +1,6 @@
 ﻿import { describe, expect, it } from 'vitest';
 import { applyImport, emptyHistory } from '@/lib/aranceles/history';
-import { buildNetReport, computeNetLine, netAmountOf, netPlacement } from '@/lib/aranceles/net';
+import { buildNetReport, commissionWithIva, computeNetLine, netAmountOf, netPlacement } from '@/lib/aranceles/net';
 import { detectAccountChanges, summarizeProducers } from '@/lib/aranceles/producers';
 import {
   DEFAULT_NET_RULES,
@@ -408,6 +408,18 @@ describe('aranceles: configuración del neto', () => {
     expect(fci).toBeCloseTo(100 * 0.7, 10);
     expect(publico).toBeCloseTo(95 * 0.6, 10);
     expect(caucion).toBeCloseTo(100 * 0.6, 10);
+  });
+
+  it('el arancel con IVA usa el divisor del tipo y de la hoja; sin IVA queda igual', () => {
+    const settings = defaultSettings();
+    let h = load(emptyHistory(), 'aranceles_privado', [row('1', 100, 'ARS', { operation: 'PRIVADO' })]);
+    h = load(h, 'diferencias', [row('2', 100, 'ARS', { operation: 'DIFERENCIA' }), row('3', 100, 'USD', { operation: 'DIFERENCIA' })]);
+    h = load(h, 'acdi', [row('4', 100, 'USD', { operation: 'FCI TERCEROS' })]);
+    const byOp = (n: string) => h.commissions.find((c) => c.op_number === n)!;
+    expect(commissionWithIva(byOp('1'), settings)).toBe(100);
+    expect(commissionWithIva(byOp('2'), settings)).toBeCloseTo(121, 10);
+    expect(commissionWithIva(byOp('3'), settings)).toBe(100);
+    expect(commissionWithIva(byOp('4'), settings)).toBeCloseTo(121, 10);
   });
 
   it('coerceSettings completa tipos faltantes con la planilla', () => {

@@ -7,7 +7,7 @@ import {
   sortByDateDesc,
   summarize,
 } from '@/lib/aranceles/history';
-import { netAmountOf } from '@/lib/aranceles/net';
+import { commissionWithIva, netAmountOf } from '@/lib/aranceles/net';
 import { loadSegmentedHistory } from '@/lib/aranceles/segment-store';
 import { coerceSettings } from '@/lib/aranceles/settings';
 import {
@@ -39,10 +39,10 @@ export async function GET(req: Request) {
     const measure = sp.get('measure') === 'net' ? 'net' : 'gross';
 
     const { history, commissions } = await loadSegmentedHistory();
+    const settings = coerceSettings(history.settings);
     let filtered = filterBySegment(filterCommissions(commissions, filters), parseSegmentFilters(sp));
     let withoutNet: { rows: number; totals: Record<string, number> } | null = null;
     if (measure === 'net') {
-      const settings = coerceSettings(history.settings);
       const skipped = { rows: 0, totals: {} as Record<string, number> };
       const net: typeof filtered = [];
       for (const c of filtered) {
@@ -59,6 +59,16 @@ export async function GET(req: Request) {
       withoutNet = skipped;
     }
     const lastImport = [...history.imports].sort((a, b) => b.imported_at.localeCompare(a.imported_at))[0] ?? null;
+    const totalsWithIva: Record<string, number> = {};
+    if (measure === 'gross') {
+      for (const c of filtered) {
+        const cur = c.commission_currency || c.currency;
+        totalsWithIva[cur] = (totalsWithIva[cur] ?? 0) + commissionWithIva(c, settings);
+      }
+    }
+    const rows = sortByDateDesc(filtered)
+      .slice(0, limit)
+      .map((c) => (measure === 'gross' ? { ...c, commission_con_iva: commissionWithIva(c, settings) } : c));
 
     return NextResponse.json({
       storage: getArancelesStorageInfo(),
@@ -72,9 +82,10 @@ export async function GET(req: Request) {
       measure,
       withoutNet,
       summary: summarize(filtered),
+      totalsWithIva: measure === 'gross' ? totalsWithIva : null,
       segments: segmentBreakdowns(filtered),
       total: filtered.length,
-      rows: sortByDateDesc(filtered).slice(0, limit),
+      rows,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error al leer el historial de aranceles.';

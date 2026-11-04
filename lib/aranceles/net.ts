@@ -288,6 +288,27 @@ export function netAmountOf(c: ArancelCommission, settings: ArancelesSettings): 
   return r && 'aPagar' in r ? r.aPagar : null;
 }
 
+/** Divisor de IVA del tipo (1 = sin IVA, 1.21 = el bruto sin IVA se muestra también con IVA). */
+export function ivaFactorOf(c: ArancelCommission, settings: ArancelesSettings = defaultSettings()): number {
+  const placement = netPlacement(c);
+  if (!placement || placement.bucket == null) return 1;
+  const rule = ruleFor(settings, c.trade_date);
+  const currency = c.commission_currency || c.currency;
+  if (netAlycOf(c.alyc) === 'GMA') {
+    const bucket = placement.bucket;
+    if (bucket !== 'privado' && bucket !== 'publico' && bucket !== 'diferencia' && bucket !== 'caucion') return 1;
+    const g = rule.gma.buckets[bucket];
+    return netSheet(currency) === 'pesos' ? g.iva_pesos : g.iva_dolares;
+  }
+  if (placement.bucket === 'caucion') return 1;
+  return ivaDivisor(placement.bucket, currency, rule);
+}
+
+/** Arancel bruto con el IVA del tipo y de la hoja (pesos o dólares). Si el tipo no lleva IVA, coincide con el bruto. */
+export function commissionWithIva(c: ArancelCommission, settings: ArancelesSettings = defaultSettings()): number {
+  return c.commission * ivaFactorOf(c, settings);
+}
+
 type LineAcc = {
   alyc: NetAlyc;
   persona: string | null;

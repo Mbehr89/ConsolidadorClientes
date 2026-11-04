@@ -5,20 +5,25 @@ import { feeTypeLabel } from '@/lib/aranceles/fee-types';
 import { formatDate, formatMoney } from '@/lib/aranceles/format';
 import type { ArancelCommission } from '@/lib/aranceles/types';
 
+export type OperationRow = ArancelCommission & { commission_con_iva?: number };
+
 export function OperationsTable({
   rows,
   showClient = true,
   maxHeightClass = 'max-h-[560px]',
   feeLabel = 'Arancel',
+  showFeeWithIva = false,
 }: {
-  rows: readonly ArancelCommission[];
+  rows: readonly OperationRow[];
   showClient?: boolean;
   maxHeightClass?: string;
   feeLabel?: string;
+  /** Segunda columna: el mismo arancel bruto multiplicado por el IVA del tipo. */
+  showFeeWithIva?: boolean;
 }) {
   return (
     <div className={`${maxHeightClass} overflow-auto`}>
-      <table className="w-full min-w-[900px] text-sm">
+      <table className={`w-full text-sm ${showFeeWithIva ? 'min-w-[1080px]' : 'min-w-[900px]'}`}>
         <thead className="sticky top-0 border-b bg-card">
           <tr className="text-xs uppercase text-muted-foreground">
             <th className="p-2 text-left font-medium">Fecha</th>
@@ -29,6 +34,7 @@ export function OperationsTable({
             <th className="p-2 text-left font-medium">Instrumento</th>
             <th className="p-2 text-right font-medium">Bruto</th>
             <th className="p-2 text-right font-medium">{feeLabel}</th>
+            {showFeeWithIva && <th className="p-2 text-right font-medium">Arancel bruto (con IVA)</th>}
             <th className="p-2 text-left font-medium">Estado</th>
           </tr>
         </thead>
@@ -69,6 +75,11 @@ export function OperationsTable({
               <td className="p-2 text-right font-medium tabular-nums">
                 <FeeCell row={r} />
               </td>
+              {showFeeWithIva && (
+                <td className="p-2 text-right font-medium tabular-nums">
+                  {formatMoney(r.commission_con_iva ?? r.commission, r.commission_currency)}
+                </td>
+              )}
               <td className="p-2">
                 <StatusCell row={r} />
               </td>
