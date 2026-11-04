@@ -165,12 +165,32 @@ export type NetBlock = {
   excluded: Excluded;
 };
 
+export type NetClientTipo = {
+  key: string;
+  alyc: NetAlyc;
+  bucket: NetLineKey;
+  label: string;
+  aPagar: Record<string, number>;
+  rows: number;
+};
+
+/** A pagar de un cliente en todo el rango, sumando brokers y monedas. */
+export type NetClientTotal = {
+  key: string;
+  name: string;
+  rows: number;
+  aPagar: Record<string, number>;
+  byTipo: NetClientTipo[];
+};
+
 export type NetReport = {
   blocks: NetBlock[];
   /** Totales de todo el rango por ALYC y moneda. */
   totals: { alyc: NetAlyc; currency: string; sheet: NetSheet | null; totals: NetTotals; excluded: Excluded }[];
   /** Totales de todo el rango por moneda, sumando las ALYC. */
   byCurrency: { currency: string; bruto: number; aPagar: number }[];
+  /** A pagar por cliente en todo el rango. No incluye operaciones excluidas de la liquidación. */
+  clients: NetClientTotal[];
   /** Operaciones de ALYC sin regla de neto. */
   otherAlycRows: number;
   currentRules: NetRuleVersion;
@@ -350,6 +370,55 @@ function single(s: Set<number>): number | null {
   return s.size === 1 ? [...s][0]! : null;
 }
 
+function addAmount(target: Record<string, number>, currency: string, value: number) {
+  target[currency] = (target[currency] ?? 0) + value;
+}
+
+type ClientTipoAcc = {
+  alyc: NetAlyc;
+  bucket: NetLineKey;
+  aPagar: Record<string, number>;
+  rows: number;
+};
+
+type ClientAcc = {
+  key: string;
+  name: string;
+  rows: number;
+  aPagar: Record<string, number>;
+  tipos: Map<string, ClientTipoAcc>;
+};
+
+function clientDisplayName(name: string): string {
+  const trimmed = name.trim();
+  return trimmed || 'Sin cliente';
+}
+
+function finishClients(clients: Map<string, ClientAcc>): NetClientTotal[] {
+  return [...clients.values()]
+    .map((c) => ({
+      key: c.key,
+      name: c.name,
+      rows: c.rows,
+      aPagar: c.aPagar,
+      byTipo: [...c.tipos.values()]
+        .sort(
+          (a, b) =>
+            (ALYC_ORDER.get(a.alyc) ?? 0) - (ALYC_ORDER.get(b.alyc) ?? 0) ||
+            (LINE_ORDER.get(a.bucket) ?? 0) - (LINE_ORDER.get(b.bucket) ?? 0)
+        )
+        .map((t) => ({
+          key: `${t.alyc}|${t.bucket}`,
+          alyc: t.alyc,
+          bucket: t.bucket,
+          label: NET_LINE_LABEL[t.bucket],
+          aPagar: t.aPagar,
+          rows: t.rows,
+        })),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
 const LINE_ORDER = new Map<NetLineKey, number>([...NET_BUCKETS, 'caucion' as const].map((b, i) => [b, i]));
 const ALYC_ORDER = new Map(NET_ALYCS.map((a, i) => [a, i]));
 
@@ -429,6 +498,7 @@ export function buildNetReport(
     });
   const byBlock = new Map<string, { period: string; currency: string; acc: Acc }>();
   const byTotal = new Map<string, { alyc: NetAlyc; currency: string; acc: Acc }>();
+  const byClient = new Map<string, ClientAcc>();
   const versions = new Set<string>();
   let otherAlycRows = 0;
   let agreementRows = 0;
@@ -459,6 +529,27 @@ export function buildNetReport(
     const persona = personaOf(c, alyc);
     accumulate(block.acc, r, persona);
     accumulate(total.acc, r, persona);
+    const clientKey = c.client_key || '';
+    const client: ClientAcc = byClient.get(clientKey) ?? {
+      key: clientKey,
+      name: clientDisplayName(c.client),
+      rows: 0,
+      aPagar: {},
+      tipos: new Map(),
+    };
+    addAmount(client.aPagar, currency, r.aPagar);
+    client.rows += 1;
+    const tipoKey = `${r.alyc}|${r.bucket}`;
+    const tipo: ClientTipoAcc = client.tipos.get(tipoKey) ?? {
+      alyc: r.alyc,
+      bucket: r.bucket,
+      aPagar: {},
+      rows: 0,
+    };
+    addAmount(tipo.aPagar, currency, r.aPagar);
+    tipo.rows += 1;
+    client.tipos.set(tipoKey, tipo);
+    byClient.set(clientKey, client);
   }
 
   const currencies = sortCurrencies(new Set([...byTotal.values()].map((t) => t.currency)));
@@ -495,6 +586,7 @@ export function buildNetReport(
     blocks,
     totals,
     byCurrency,
+    clients: finishClients(byClient),
     otherAlycRows,
     currentRules: currentRule(settings),
     ruleVersionsUsed: versions.size,

@@ -247,6 +247,38 @@ describe('aranceles: neto IEB (calculadora)', () => {
     ]);
     expect(b.totals.aPagar).toBeCloseTo(180 * 0.945 * 0.65 + 77 * 0.6, 10);
   });
+
+  it('agrupa el a pagar por cliente, sumando brokers y tipos', () => {
+    let h = load(emptyHistory(), 'aranceles_privado', [
+      row('1', 100, 'ARS', { operation: 'PRIVADO', client: 'Ana Pérez', clientExternalId: '10' }),
+      row('2', 50, 'USD', { operation: 'PRIVADO', client: 'Ana Pérez', clientExternalId: '10' }),
+    ]);
+    h = load(h, 'aranceles_publico', [
+      row('3', 20, 'ARS', { operation: 'PUBLICO', client: 'Beto Gómez', clientExternalId: '20' }),
+    ]);
+    h = applyImport(h, {
+      alyc: 'GMA',
+      filename: 'g.xlsx',
+      rows: [row('9', 40, 'ARS', { operation: 'COMPRA', instrument: 'GGAL', client: 'Ana Pérez', clientExternalId: '11' })],
+      format: 'gma',
+    }).history;
+    const r = buildNetReport(h.commissions, 'month');
+    const ana = r.clients.find((c) => c.name === 'Ana Pérez')!;
+    const beto = r.clients.find((c) => c.name === 'Beto Gómez')!;
+    expect(ana.rows).toBe(3);
+    expect(ana.aPagar.ARS).toBeCloseTo(100 * 0.945 * 0.65 + 24, 10);
+    expect(ana.aPagar.USD).toBeCloseTo(computeNetLine('privado', 'USD', 50, 0).aPagar, 10);
+    expect(beto.aPagar.ARS).toBeCloseTo(computeNetLine('publico', 'ARS', 20, 0).aPagar, 10);
+    expect(r.clients.map((c) => c.name)).toEqual(['Ana Pérez', 'Beto Gómez']);
+    expect(r.clients.reduce((s, c) => s + (c.aPagar.ARS ?? 0), 0)).toBeCloseTo(
+      r.byCurrency.find((c) => c.currency === 'ARS')!.aPagar,
+      8
+    );
+    expect(ana.byTipo.map((t) => [t.alyc, t.bucket, t.rows])).toEqual([
+      ['IEB', 'privado', 2],
+      ['GMA', 'privado', 1],
+    ]);
+  });
 });
 
 describe('aranceles: configuración del neto', () => {
