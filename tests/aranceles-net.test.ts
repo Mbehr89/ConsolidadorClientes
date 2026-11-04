@@ -410,6 +410,29 @@ describe('aranceles: configuración del neto', () => {
     expect(caucion).toBeCloseTo(100 * 0.6, 10);
   });
 
+  it('GMA se lee sin IVA; la columna con IVA multiplica por 1,21 sólo si está marcado', () => {
+    const base = defaultSettings();
+    const h = applyImport(emptyHistory(), {
+      alyc: 'GMA',
+      filename: 'g.xlsx',
+      rows: [row('9', 100, 'ARS', { operation: 'COMPRA', instrument: 'GGAL' }), row('10', 50, 'USD', { operation: 'VENTA', instrument: 'AL30' })],
+      format: 'gma',
+    }).history;
+    const ars = h.commissions.find((c) => c.op_number === '9')!;
+    const usd = h.commissions.find((c) => c.op_number === '10')!;
+    expect(commissionWithIva(ars, base)).toBe(100);
+    expect(commissionWithIva(usd, base)).toBe(50);
+    expect(netAmountOf(ars, base)).toBeCloseTo(60, 10);
+    const conIva: ArancelesSettings = {
+      ...base,
+      net_rules: [{ ...base.net_rules[0]!, gma: { ...base.net_rules[0]!.gma, lleva_iva: true } }],
+    };
+    expect(commissionWithIva(ars, conIva)).toBeCloseTo(121, 10);
+    expect(commissionWithIva(usd, conIva)).toBeCloseTo(60.5, 10);
+    expect(netAmountOf(ars, conIva)).toBeCloseTo(60, 10);
+    expect(coerceSettings({ net_rules: [base.net_rules[0]!] }).net_rules[0]!.gma.lleva_iva).toBe(false);
+  });
+
   it('el arancel con IVA usa el divisor del tipo y de la hoja; sin IVA queda igual', () => {
     const settings = defaultSettings();
     let h = load(emptyHistory(), 'aranceles_privado', [row('1', 100, 'ARS', { operation: 'PRIVADO' })]);

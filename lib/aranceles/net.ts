@@ -3,6 +3,7 @@ import { feeTypeOf } from '@/lib/aranceles/fee-types';
 import { periodKey, sortCurrencies, type PeriodGranularity } from '@/lib/aranceles/reports';
 import {
   DEFAULT_NET_RULES,
+  GMA_IVA_FACTOR,
   NET_BUCKETS,
   NET_BUCKET_LABEL,
   agreementFor,
@@ -288,18 +289,13 @@ export function netAmountOf(c: ArancelCommission, settings: ArancelesSettings): 
   return r && 'aPagar' in r ? r.aPagar : null;
 }
 
-/** Divisor de IVA del tipo (1 = sin IVA, 1.21 = el bruto sin IVA se muestra también con IVA). */
+/** Factor para la columna con IVA. IEB: divisor del tipo. GMA: 1,21 sólo si el formato está marcado. */
 export function ivaFactorOf(c: ArancelCommission, settings: ArancelesSettings = defaultSettings()): number {
   const placement = netPlacement(c);
   if (!placement || placement.bucket == null) return 1;
   const rule = ruleFor(settings, c.trade_date);
   const currency = c.commission_currency || c.currency;
-  if (netAlycOf(c.alyc) === 'GMA') {
-    const bucket = placement.bucket;
-    if (bucket !== 'privado' && bucket !== 'publico' && bucket !== 'diferencia' && bucket !== 'caucion') return 1;
-    const g = rule.gma.buckets[bucket];
-    return netSheet(currency) === 'pesos' ? g.iva_pesos : g.iva_dolares;
-  }
+  if (netAlycOf(c.alyc) === 'GMA') return rule.gma.lleva_iva ? GMA_IVA_FACTOR : 1;
   if (placement.bucket === 'caucion') return 1;
   return ivaDivisor(placement.bucket, currency, rule);
 }

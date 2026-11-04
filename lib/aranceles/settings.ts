@@ -49,9 +49,17 @@ export const GMA_BUCKET_LABEL: Record<GmaBucket, string> = {
   caucion: 'Cauciones',
 };
 
-/** GMA: a pagar = (bruto − IIBB) × retrocesión ÷ IVA. Hoy sin IIBB ni IVA. */
+/** Alícuota de IVA para pasar el bruto sin IVA de GMA a la columna con IVA. */
+export const GMA_IVA_FACTOR = 1.21;
+
+/** GMA: a pagar = (bruto − IIBB) × retrocesión ÷ IVA. El archivo viene sin IVA. */
 export type GmaRules = {
   iibb_rate: number;
+  /**
+   * El Excel de GMA trae el arancel sin IVA. Si está marcado, la columna «con IVA» del resumen
+   * multiplica ese importe por 1,21. No cambia la lectura ni el neto a pagar.
+   */
+  lleva_iva: boolean;
   buckets: Record<GmaBucket, BucketRule>;
 };
 
@@ -126,6 +134,7 @@ export const DEFAULT_PERSON_ALIASES: PersonAlias[] = [
 export function gmaRulesWithShare(share: number): GmaRules {
   return {
     iibb_rate: 0,
+    lleva_iva: false,
     buckets: Object.fromEntries(
       GMA_BUCKETS.map((b) => [b, { share, iva_pesos: 1, iva_dolares: 1, aplica_iibb: true }])
     ) as Record<GmaBucket, BucketRule>,
@@ -172,6 +181,7 @@ export function coerceSettings(raw: unknown): ArancelesSettings {
       ...v,
       gma: {
         iibb_rate: typeof v.gma?.iibb_rate === 'number' ? v.gma.iibb_rate : gmaBase.iibb_rate,
+        lleva_iva: v.gma?.lleva_iva === true,
         buckets: Object.fromEntries(
           GMA_BUCKETS.map((b) => [b, { ...gmaBase.buckets[b], ...(v.gma?.buckets?.[b] ?? {}) }])
         ) as Record<GmaBucket, BucketRule>,
