@@ -146,8 +146,12 @@ export type ClientPeriodRow = {
   key: string;
   name: string;
   rows: number;
+  /** Arancel del archivo, sin IVA. */
   byPeriod: Record<string, Totals>;
+  /** Mismo arancel con el IVA que corresponda a cada operación. */
+  byPeriodIva: Record<string, Totals>;
   total: Totals;
+  totalIva: Totals;
 };
 
 export type ClientPeriodReport = {
@@ -156,17 +160,25 @@ export type ClientPeriodReport = {
   currencies: string[];
   clients: ClientPeriodRow[];
   periodTotals: Record<string, Totals>;
+  periodTotalsIva: Record<string, Totals>;
   totals: Totals;
+  totalsIva: Totals;
 };
 
-/** Aranceles de cada cliente por período, con el total acumulado del rango. */
+/**
+ * Aranceles de cada cliente por período, con el total acumulado del rango.
+ * `withIva` pasa el bruto sin IVA al importe con IVA. Por defecto no lo cambia.
+ */
 export function buildClientPeriodReport(
   commissions: readonly ArancelCommission[],
-  g: PeriodGranularity
+  g: PeriodGranularity,
+  withIva: (c: ArancelCommission) => number = (c) => c.commission
 ): ClientPeriodReport {
   const clients = new Map<string, ClientPeriodRow>();
   const periodTotals: Record<string, Totals> = {};
+  const periodTotalsIva: Record<string, Totals> = {};
   const totals: Totals = {};
+  const totalsIva: Totals = {};
   const currencies = new Set<string>();
 
   for (const c of commissions) {
@@ -175,14 +187,19 @@ export function buildClientPeriodReport(
     const pk = periodKey(c.trade_date, g);
     let row = clients.get(c.client_key);
     if (!row) {
-      row = { key: c.client_key, name: c.client, rows: 0, byPeriod: {}, total: {} };
+      row = { key: c.client_key, name: c.client, rows: 0, byPeriod: {}, byPeriodIva: {}, total: {}, totalIva: {} };
       clients.set(c.client_key, row);
     }
+    const iva = withIva(c);
     row.rows += 1;
     add((row.byPeriod[pk] ??= {}), cur, c.commission);
+    add((row.byPeriodIva[pk] ??= {}), cur, iva);
     add(row.total, cur, c.commission);
+    add(row.totalIva, cur, iva);
     add((periodTotals[pk] ??= {}), cur, c.commission);
+    add((periodTotalsIva[pk] ??= {}), cur, iva);
     add(totals, cur, c.commission);
+    add(totalsIva, cur, iva);
   }
 
   return {
@@ -190,7 +207,9 @@ export function buildClientPeriodReport(
     currencies: sortCurrencies(currencies),
     clients: [...clients.values()].sort((a, b) => a.name.localeCompare(b.name, 'es')),
     periodTotals,
+    periodTotalsIva,
     totals,
+    totalsIva,
   };
 }
 

@@ -46,8 +46,9 @@ const MAX_ROWS = 1000;
 type SummaryResponse = {
   summary: ArancelesSummary;
   total: number;
-  rows: SegmentedCommission[];
+  rows: (SegmentedCommission & { commission_con_iva?: number })[];
   clients: { key: string; name: string }[];
+  totalsWithIva: Record<string, number> | null;
 };
 
 function safeDecode(value: string): string {
@@ -226,11 +227,18 @@ export default function ArancelesClienteDetallePage({
 
       {data && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Stat
-              label="Aranceles"
+              label="Aranceles brutos (sin IVA)"
               value={<TotalsStack totals={data.summary.totals} align="start" className="text-base" />}
             />
+            {data.totalsWithIva && (
+              <Stat
+                label="Aranceles brutos (con IVA)"
+                value={<TotalsStack totals={data.totalsWithIva} align="start" className="text-base" />}
+                hint="GMA se lee sin IVA. Con IVA multiplica por 1,21 sólo los tipos marcados en Configuración."
+              />
+            )}
             <Stat label="Operaciones" value={formatNumber(data.summary.rowCount)} />
             <Stat label="ALYCs" value={formatNumber(data.summary.alycCount)} />
             <Stat
@@ -299,6 +307,8 @@ export default function ArancelesClienteDetallePage({
                   rows={visibleRows}
                   showClient={false}
                   maxHeightClass="max-h-[640px]"
+                  feeLabel="Arancel bruto (sin IVA)"
+                  showFeeWithIva
                   sort={sort}
                   onSort={(by) => setSort((prev) => toggleOperationSort(prev, by))}
                 />

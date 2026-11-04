@@ -107,8 +107,23 @@ describe('aranceles: reportes por período', () => {
     expect(r.periods).toEqual(['2026-01', '2026-02', '2026-04']);
     const a = r.clients.find((c) => c.name === 'Cliente A');
     expect(a?.byPeriod['2026-01']).toEqual({ ARS: 100, USD: 2 });
+    expect(a?.byPeriodIva['2026-01']).toEqual(a?.byPeriod['2026-01']);
     expect(a?.total).toEqual({ ARS: 130, USD: 2 });
+    expect(a?.totalIva).toEqual(a?.total);
     expect(r.periodTotals['2026-04']).toEqual({ ARS: 30, USD: 1.5 });
+    expect(r.periodTotalsIva['2026-04']).toEqual(r.periodTotals['2026-04']);
+    expect(r.totalsIva).toEqual(r.totals);
+
+    const conIva = buildClientPeriodReport(rows, 'month', (c) =>
+      c.client === 'Cliente A' && c.commission_currency === 'ARS' ? c.commission * 1.21 : c.commission
+    );
+    const aIva = conIva.clients.find((c) => c.name === 'Cliente A');
+    expect(aIva?.byPeriod['2026-01']).toEqual({ ARS: 100, USD: 2 });
+    expect(aIva?.byPeriodIva['2026-01']?.ARS).toBeCloseTo(121, 10);
+    expect(aIva?.byPeriodIva['2026-01']?.USD).toBe(2);
+    expect(aIva?.totalIva.ARS).toBeCloseTo(157.3, 10);
+    expect(conIva.periodTotalsIva['2026-04']?.ARS).toBeCloseTo(36.3, 10);
+    expect(conIva.totals.ARS).toBe(180);
 
     const running = runningTotals(r.periods, a?.byPeriod ?? {});
     expect(running['2026-02']).toEqual({ ARS: 100, USD: 2 });

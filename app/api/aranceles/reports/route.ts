@@ -6,7 +6,7 @@ import {
   parseGranularity,
   parseGroupBy,
 } from '@/lib/aranceles/reports';
-import { buildNetReport } from '@/lib/aranceles/net';
+import { buildNetReport, commissionWithIva } from '@/lib/aranceles/net';
 import { loadSegmentedHistory } from '@/lib/aranceles/segment-store';
 import { coerceSettings } from '@/lib/aranceles/settings';
 import {
@@ -37,6 +37,7 @@ export async function GET(req: Request) {
     const view = rawView === 'client' || rawView === 'net' ? rawView : 'broker';
 
     const { history, commissions } = await loadSegmentedHistory();
+    const settings = coerceSettings(history.settings);
     const filtered = filterBySegment(filterCommissions(commissions, filters), parseSegmentFilters(sp));
 
     return NextResponse.json({
@@ -49,9 +50,9 @@ export async function GET(req: Request) {
       groupBy,
       report:
         view === 'client'
-          ? buildClientPeriodReport(filtered, granularity)
+          ? buildClientPeriodReport(filtered, granularity, (c) => commissionWithIva(c, settings))
           : view === 'net'
-            ? buildNetReport(filtered, granularity, coerceSettings(history.settings), {
+            ? buildNetReport(filtered, granularity, settings, {
                 personaOf: (c) => (c as SegmentedCommission).manager,
               })
             : buildBrokerPeriodReport(filtered, granularity, groupBy),

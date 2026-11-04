@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyBlock, ErrorBlock, LoadingBlock, inputClass } from '@/components/aranceles/shared';
@@ -97,6 +97,10 @@ export default function ArancelesPorClientePage({
     if (!report) return {};
     return mode === 'running' ? runningTotals(report.periods, report.periodTotals) : report.periodTotals;
   }, [report, mode]);
+  const periodTotalsIva = useMemo(() => {
+    if (!report) return {};
+    return mode === 'running' ? runningTotals(report.periods, report.periodTotalsIva) : report.periodTotalsIva;
+  }, [report, mode]);
 
   const detailQuery = useMemo(() => {
     const p = new URLSearchParams();
@@ -156,8 +160,10 @@ export default function ArancelesPorClientePage({
               <CardTitle className="text-lg">Aranceles por cliente y período</CardTitle>
               <p className="text-sm text-muted-foreground">
                 {mode === 'running'
-                  ? 'Cada columna muestra lo acumulado desde el primer período del rango.'
-                  : 'Cada columna muestra lo cobrado en el período; la última, el acumulado del rango.'}
+                  ? 'Cada período acumula desde el primero del rango, sin IVA y con IVA.'
+                  : 'Cada período muestra el arancel sin IVA y con IVA. La última pareja es el acumulado del rango.'}{' '}
+                Sin IVA es el importe del archivo. Con IVA usa el IVA de cada tipo; en GMA, sólo los instrumentos
+                marcados en Configuración.
                 {currency ? ` Montos en ${currencyLabel(currency)}.` : ''}
               </p>
             </div>
@@ -203,22 +209,39 @@ export default function ArancelesPorClientePage({
               <p className="text-sm text-muted-foreground">Sin operaciones en este corte.</p>
             ) : (
               <div className="max-h-[640px] overflow-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[720px] text-sm">
                   <thead className="sticky top-0 z-20 border-b bg-card text-xs uppercase text-muted-foreground">
                     <tr>
-                      <th className="sticky left-0 z-10 min-w-[200px] bg-card p-2 text-left font-medium">Cliente</th>
+                      <th rowSpan={2} className="sticky left-0 z-10 min-w-[200px] bg-card p-2 text-left font-medium">
+                        Cliente
+                      </th>
                       {report.periods.map((p) => (
-                        <th key={p} className="whitespace-nowrap p-2 text-right font-medium">
+                        <th key={p} colSpan={2} className="whitespace-nowrap border-l p-2 text-center font-medium">
                           {formatPeriod(p)}
                         </th>
                       ))}
-                      <th className="whitespace-nowrap border-l p-2 text-right font-medium">Acumulado</th>
-                      <th className="p-2 text-right font-medium">Op.</th>
+                      <th colSpan={2} className="whitespace-nowrap border-l p-2 text-center font-medium">
+                        Acumulado
+                      </th>
+                      <th rowSpan={2} className="p-2 text-right font-medium">
+                        Op.
+                      </th>
+                    </tr>
+                    <tr>
+                      {report.periods.map((p) => (
+                        <Fragment key={p}>
+                          <th className="whitespace-nowrap border-l bg-card p-2 text-right font-medium">Sin IVA</th>
+                          <th className="whitespace-nowrap bg-card p-2 text-right font-medium">Con IVA</th>
+                        </Fragment>
+                      ))}
+                      <th className="whitespace-nowrap border-l bg-card p-2 text-right font-medium">Sin IVA</th>
+                      <th className="whitespace-nowrap bg-card p-2 text-right font-medium">Con IVA</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((c) => {
                       const cells = mode === 'running' ? runningTotals(report.periods, c.byPeriod) : c.byPeriod;
+                      const cellsIva = mode === 'running' ? runningTotals(report.periods, c.byPeriodIva) : c.byPeriodIva;
                       return (
                         <tr key={c.key} className="group border-b border-border/50 hover:bg-muted/40">
                           <td className="sticky left-0 bg-card p-2 group-hover:bg-muted">
@@ -230,12 +253,20 @@ export default function ArancelesPorClientePage({
                             </Link>
                           </td>
                           {report.periods.map((p) => (
-                            <td key={p} className="p-2 text-right align-top tabular-nums">
-                              <TotalsCell totals={cells[p]} currency={currency} currencies={currencies} />
-                            </td>
+                            <Fragment key={p}>
+                              <td className="border-l p-2 text-right align-top tabular-nums">
+                                <TotalsCell totals={cells[p]} currency={currency} currencies={currencies} />
+                              </td>
+                              <td className="p-2 text-right align-top tabular-nums">
+                                <TotalsCell totals={cellsIva[p]} currency={currency} currencies={currencies} />
+                              </td>
+                            </Fragment>
                           ))}
                           <td className="border-l p-2 text-right align-top font-medium tabular-nums">
                             <TotalsCell totals={c.total} currency={currency} currencies={currencies} />
+                          </td>
+                          <td className="p-2 text-right align-top font-medium tabular-nums">
+                            <TotalsCell totals={c.totalIva} currency={currency} currencies={currencies} />
                           </td>
                           <td className="p-2 text-right align-top tabular-nums text-muted-foreground">
                             {formatNumber(c.rows)}
@@ -250,12 +281,20 @@ export default function ArancelesPorClientePage({
                         {mode === 'running' ? 'Total acumulado' : 'Total del período'}
                       </td>
                       {report.periods.map((p) => (
-                        <td key={p} className="p-2 text-right align-top tabular-nums">
-                          <TotalsCell totals={periodTotals[p]} currency={currency} currencies={currencies} />
-                        </td>
+                        <Fragment key={p}>
+                          <td className="border-l p-2 text-right align-top tabular-nums">
+                            <TotalsCell totals={periodTotals[p]} currency={currency} currencies={currencies} />
+                          </td>
+                          <td className="p-2 text-right align-top tabular-nums">
+                            <TotalsCell totals={periodTotalsIva[p]} currency={currency} currencies={currencies} />
+                          </td>
+                        </Fragment>
                       ))}
                       <td className="border-l p-2 text-right align-top tabular-nums">
                         <TotalsCell totals={report.totals} currency={currency} currencies={currencies} />
+                      </td>
+                      <td className="p-2 text-right align-top tabular-nums">
+                        <TotalsCell totals={report.totalsIva} currency={currency} currencies={currencies} />
                       </td>
                       <td className="p-2 text-right align-top tabular-nums">
                         {formatNumber(report.clients.reduce((s, c) => s + c.rows, 0))}
