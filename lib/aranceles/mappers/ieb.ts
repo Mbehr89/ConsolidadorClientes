@@ -75,7 +75,7 @@ export function isIebArancelesHeaders(headers: string[]): boolean {
 }
 
 export function isIebAcdiHeaders(headers: string[]): boolean {
-  const set = new Set(headers.map(norm));
+  const set = new Set(headers.map((h) => norm(h).replace(/ /g, "")));
   return set.has("comision") && set.has("nombredelfondo") && set.has("cliente");
 }
 
@@ -157,10 +157,72 @@ export function iebArancelesMapping(headers: string[]): ColumnMapping {
   return mapping;
 }
 
+const ACDI_MONTHS: Record<string, number> = {
+  enero: 1, ene: 1,
+  febrero: 2, feb: 2,
+  marzo: 3, mar: 3,
+  abril: 4, abr: 4,
+  mayo: 5, may: 5,
+  junio: 6, jun: 6,
+  julio: 7, jul: 7,
+  agosto: 8, ago: 8,
+  septiembre: 9, setiembre: 9, sep: 9, sept: 9,
+  octubre: 10, oct: 10,
+  noviembre: 11, nov: 11,
+  diciembre: 12, dic: 12,
+};
+
+function acdiPart(raw: unknown, kind: "year" | "month"): number | null {
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return kind === "year" ? raw.getFullYear() : raw.getMonth() + 1;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const n = Math.trunc(raw);
+    if (kind === "year" && n >= 1900 && n <= 2100) return n;
+    if (kind === "month" && n >= 1 && n <= 12) return n;
+    return null;
+  }
+  const s = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!s) return null;
+  if (kind === "month" && ACDI_MONTHS[s]) return ACDI_MONTHS[s];
+  const n = Number(s.replace(",", "."));
+  if (!Number.isFinite(n)) return null;
+  const t = Math.trunc(n);
+  if (kind === "year" && t >= 1900 && t <= 2100) return t;
+  if (kind === "year" && t >= 0 && t < 100) return 2000 + t;
+  if (kind === "month" && t >= 1 && t <= 12) return t;
+  return null;
+}
+
+/** Columnas nuevas de ACDI: año y mes (suelen estar en A y B). La fecha de la operación es el día 1 de ese mes. */
+export function acdiYearMonthHeaders(headers: string[]): { year: string; month: string } | null {
+  const year = headers.find((h) => {
+    const n = norm(h);
+    return n === "ano" || n === "anio" || n === "year";
+  });
+  const month = headers.find((h) => {
+    const n = norm(h);
+    return n === "mes" || n === "month";
+  });
+  return year && month ? { year, month } : null;
+}
+
+/** `2026` + `9` / `septiembre` → `2026-09-01`. Null si falta alguno o no se puede leer. */
+export function acdiPeriodDate(yearRaw: unknown, monthRaw: unknown): string | null {
+  const year = acdiPart(yearRaw, "year");
+  const month = acdiPart(monthRaw, "month");
+  if (year == null || month == null) return null;
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
 export function iebAcdiMapping(headers: string[]): ColumnMapping {
   const mapping: ColumnMapping = {};
   for (const header of headers) {
-    const n = norm(header);
+    const n = norm(header).replace(/ /g, "");
     let field: CanonicalField = "ignore";
     if (n === "cliente") field = "client";
     else if (n === "comitente") field = "client_external_id";

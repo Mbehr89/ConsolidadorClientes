@@ -1,6 +1,8 @@
 import { detectAndMap } from "@/lib/aranceles/detect";
 import {
   detectIebSegment,
+  acdiPeriodDate,
+  acdiYearMonthHeaders,
   iebAcdiMapping,
   iebArancelesMapping,
   iebGenericFeeMapping,
@@ -114,6 +116,16 @@ export function parseImportBuffer(
       mapping = iebSegmentMapping(parsed.headers, segment);
     } else if (isIebAcdiHeaders(parsed.headers) || segment === "acdi") {
       mapping = iebAcdiMapping(parsed.headers);
+      const period = acdiYearMonthHeaders(parsed.headers);
+      if (period) {
+        const header = "Fecha (año-mes)";
+        for (const row of parsed.rows) {
+          const iso = acdiPeriodDate(row[period.year], row[period.month]);
+          if (iso) row[header] = iso;
+        }
+        if (!parsed.headers.includes(header)) parsed.headers.push(header);
+        mapping[header] = "date";
+      }
     } else if (isIebArancelesHeaders(parsed.headers)) {
       mapping = iebArancelesMapping(parsed.headers);
     } else {

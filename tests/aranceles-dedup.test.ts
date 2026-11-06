@@ -162,6 +162,20 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     expect(findDuplicateGroups([...a.history.commissions, other])).toHaveLength(0);
   });
 
+  it('ACDI: el mismo ID con otra fecha se actualiza y no se duplica ni queda en conflicto', () => {
+    const first = load(emptyHistory(), 'IEB', [row('10', { date: '2026-01-01', instrument: 'Fondo X', commission: 5 })], 'acdi');
+    const second = load(first.history, 'IEB', [row('10', { date: '2026-09-01', instrument: 'Fondo X', commission: 8 })], 'acdi');
+    expect(second.inserted).toBe(0);
+    expect(second.updated).toBe(1);
+    expect(second.conflicts).toHaveLength(0);
+    expect(second.history.commissions).toHaveLength(1);
+    expect(second.history.commissions[0]).toMatchObject({ trade_date: '2026-09-01', commission: 8, instrument: 'Fondo X' });
+    const again = load(second.history, 'IEB', [row('10', { date: '2026-09-01', instrument: 'Fondo X', commission: 8 })], 'acdi');
+    expect(again.updated).toBe(0);
+    expect(again.duplicates).toBe(1);
+    expect(again.history.commissions).toHaveLength(1);
+  });
+
   it('IEB: el mismo ID en planillas distintas (aranceles vs ACDI) son operaciones distintas', () => {
     const a = load(emptyHistory(), 'IEB', [row('777')], 'aranceles_privado');
     const b = load(a.history, 'IEB', [row('777', { instrument: 'FCI X' })], 'acdi');

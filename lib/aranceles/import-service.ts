@@ -103,6 +103,7 @@ export async function commitManualImport(input: {
   duplicates: number;
   repeatedInFile: number;
   conflicts: DedupConflict[];
+  updated: number;
   anomalyCount: number;
   scheduleCount: number;
 }> {
@@ -126,6 +127,7 @@ export async function commitManualImport(input: {
         duplicates: applied.duplicates,
         repeatedInFile: applied.repeatedInFile,
         conflicts: applied.conflicts,
+        updated: applied.updated,
         anomalyCount: countAnomaliesForImport(analyzed, applied.importRecord?.id ?? null),
         scheduleCount: analyzed.fee_schedules.length,
       },
@@ -441,6 +443,7 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
         if (applied.importRecord) newImportIds.push(applied.importRecord.id);
         const warnings: string[] = [];
         if (item.prepared.errors.length) warnings.push(`${item.prepared.errors.length} filas omitidas por datos inválidos`);
+        if (applied.updated) warnings.push(`${applied.updated} operaciones ACDI se actualizaron con el año y mes del archivo`);
         if (applied.duplicates) warnings.push(`${applied.duplicates} operaciones ya estaban en el historial`);
         if (applied.enriched) warnings.push(`a ${applied.enriched} de ellas se les completó el productor / detalle`);
         if (applied.repeatedInFile) warnings.push(`${applied.repeatedInFile} líneas repetidas dentro del archivo`);

@@ -12,6 +12,7 @@ import {
   currentAlycName,
   currentCurrency,
   fingerprintDifferences,
+  idScope,
   normalizeOpNumber,
   operationKey,
   type DedupConflict,
@@ -112,13 +113,19 @@ export type ApplyImportResult = {
   conflicts: DedupConflict[];
   /** Operaciones ya cargadas a las que este archivo les completó datos de detalle. */
   enriched: number;
+  /**
+   * Operaciones ACDI ya cargadas a las que este archivo les escribió la fecha (año y mes)
+   * y el resto de los datos. No se duplican ni quedan como conflicto.
+   */
+  updated: number;
 };
 
 /**
  * Agrega las filas al historial sin duplicar (ver dedup.ts):
  * - mismo número de operación y mismos datos → ya estaba: no se agrega y se anota este archivo como
  *   otra fuente de la operación;
- * - mismo número con datos distintos → conflicto: no se agrega ni se pisa, se informa;
+ * - mismo número con datos distintos → conflicto: no se agrega ni se pisa, se informa.
+ *   Excepción ACDI: esas planillas antes no traían fecha. El mismo ID se actualiza con el año y mes nuevos;
  * - línea repetida dentro del mismo archivo → se guarda una sola vez.
  * No recalcula tarifas: llamar a `runFeeAnalysis` después.
  */
@@ -145,6 +152,7 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
   const enrich = new Map<string, Record<string, string>>();
   let duplicates = 0;
   let repeatedInFile = 0;
+  let updatedRows = 0;
 
   const built = input.rows.map((row, i) => {
     const key = clientKey(row.client);
@@ -243,6 +251,29 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     }
     if (existing.length > 0 && !insertedOps.has(op)) {
       const prev = existing[0]!;
+      if (idScope(prev.segment) === 'acdi' && idScope(c.segment) === 'acdi') {
+        prev.client = c.client;
+        prev.client_key = c.client_key;
+        prev.client_external_id = c.client_external_id;
+        prev.account_officer = c.account_officer ?? prev.account_officer;
+        prev.trade_date = c.trade_date;
+        prev.settlement_date = c.settlement_date;
+        prev.instrument = c.instrument;
+        prev.operation = c.operation;
+        prev.quantity = c.quantity;
+        prev.amount = c.amount;
+        prev.commission = c.commission;
+        prev.commission_pct = c.commission_pct;
+        prev.currency = c.currency;
+        prev.commission_currency = c.commission_currency;
+        prev.imported_status = c.imported_status;
+        prev.fee_status = c.fee_status;
+        prev.is_min_fee = c.is_min_fee;
+        if (c.details) prev.details = { ...prev.details, ...c.details };
+        alsoIn.add(prev.id);
+        updatedRows += 1;
+        return;
+      }
       conflicts.push({
         op_number: c.op_number ?? '',
         client: c.client,
@@ -259,7 +290,7 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
   });
 
   if (input.rows.length === 0) {
-    return { history, importRecord: null, inserted: 0, duplicates, repeatedInFile, conflicts, enriched: 0 };
+    return { history, importRecord: null, inserted: 0, duplicates, repeatedInFile, conflicts, enriched: 0, updated: updatedRows };
   }
 
   const importRecord: ArancelImport = {
@@ -302,6 +333,7 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     repeatedInFile,
     conflicts,
     enriched: enrich.size,
+    updated: updatedRows,
   };
 }
 

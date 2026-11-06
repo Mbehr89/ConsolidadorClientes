@@ -29,6 +29,7 @@ type ParseResponse = {
 type CommitResponse = {
   rowCount: number;
   duplicates: number;
+  updated?: number;
   repeatedInFile: number;
   conflicts: DedupConflict[];
   conflictCount: number;
@@ -151,6 +152,7 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
             {success.empty
               ? 'El archivo estaba vacío.'
               : `Se guardaron ${success.rowCount} operaciones nuevas` +
+                (success.updated ? ` · ${success.updated} ACDI se actualizaron con año y mes` : '') +
                 (success.duplicates ? ` · ${success.duplicates} ya estaban en el historial (no se duplicaron)` : '') +
                 (success.repeatedInFile ? ` · ${success.repeatedInFile} líneas repetidas dentro del archivo` : '') +
                 (success.errorCount ? ` · ${success.errorCount} omitidas por datos inválidos` : '') +

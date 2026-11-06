@@ -1,6 +1,7 @@
 ﻿import * as XLSX from 'xlsx';
 import { describe, expect, it } from 'vitest';
 import { feeTypeOf } from '@/lib/aranceles/fee-types';
+import { acdiPeriodDate } from '@/lib/aranceles/mappers/ieb';
 import { applyImport, emptyHistory } from '@/lib/aranceles/history';
 import { prepareFile } from '@/lib/aranceles/import-service';
 
@@ -131,5 +132,46 @@ describe('aranceles IEB: notas, licitaciones y diferencias', () => {
     const r = applyImport(emptyHistory(), { alyc: 'IEB', filename: 'l.xlsx', rows: p.rows, segment: p.imp.segment, format: 'ieb' });
     expect(r.inserted).toBe(2);
     expect(r.conflicts).toHaveLength(0);
+  });
+});
+
+const ACDI = ['Año', 'Mes', 'id', 'Cliente', 'Comitente', 'Nombre del Fondo', 'Comision', 'Moneda', 'Importe'];
+
+describe('aranceles IEB: ACDI con año y mes', () => {
+  it('arma la fecha con el día 1 del mes de las columnas A y B', () => {
+    expect(acdiPeriodDate(2026, 'septiembre')).toBe('2026-09-01');
+    expect(acdiPeriodDate('2026', 2)).toBe('2026-02-01');
+    const p = prepareFile(
+      book(ACDI, [
+        [2026, 9, 10, 'Cliente A', 5001, 'Fondo Alpha', 15.5, 'USD', 100],
+        [2026, 'febrero', 11, 'Cliente B', 5002, 'Fondo Beta', 20, 'PESOS', 200],
+      ]),
+      'ACDI.xlsx'
+    );
+    expect(p.needsMapping).toBe(false);
+    expect(p.imp.segment).toBe('acdi');
+    expect(p.rows.map((r) => [r.opNumber, r.date, r.instrument, r.commission, r.currency])).toEqual([
+      ['10', '2026-09-01', 'Fondo Alpha', 15.5, 'USD'],
+      ['11', '2026-02-01', 'Fondo Beta', 20, 'ARS'],
+    ]);
+  });
+
+  it('si el archivo nuevo no trae año y mes, sigue usando la fecha de respaldo', () => {
+    const headers = ['id', 'Cliente', 'Comitente', 'Nombre del Fondo', 'Comision', 'Moneda'];
+    const p = prepareFile(
+      book(headers, [[10, 'Cliente A', 5001, 'Fondo Alpha', 15.5, 'USD']]),
+      'ACDI.xlsx',
+      { fallbackDate: '2026-08-01' }
+    );
+    expect(p.rows[0]?.date).toBe('2026-08-01');
+  });
+
+  it('el año y el mes de la fila pisan la fecha de respaldo del archivo', () => {
+    const p = prepareFile(
+      book(ACDI, [[2025, 12, 10, 'Cliente A', 5001, 'Fondo Alpha', 15.5, 'USD', 100]]),
+      'ACDI 09-2026.xlsx',
+      { fallbackDate: '2026-09-01' }
+    );
+    expect(p.rows[0]?.date).toBe('2025-12-01');
   });
 });
