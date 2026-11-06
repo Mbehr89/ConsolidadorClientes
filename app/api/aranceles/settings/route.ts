@@ -53,6 +53,15 @@ const settingsSchema = z.object({
       })
       .refine((a) => !a.valid_to || a.valid_to >= a.valid_from, 'La fecha "hasta" es anterior a "desde".')
   ),
+  manager_shares: z
+    .array(
+      z.object({
+        manager: z.string().trim().min(1).max(60),
+        ieb: z.object(Object.fromEntries(NET_BUCKETS.map((b) => [b, rate.optional()])) as Record<string, z.ZodOptional<typeof rate>>),
+        gma: z.object(Object.fromEntries(GMA_BUCKETS.map((b) => [b, rate.optional()])) as Record<string, z.ZodOptional<typeof rate>>),
+      })
+    )
+    .default([]),
   person_aliases: z.array(
     z.object({
       alias: z.string().trim().min(1).max(60),

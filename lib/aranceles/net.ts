@@ -8,6 +8,7 @@ import {
   NET_BUCKET_LABEL,
   agreementFor,
   appliesIibb,
+  managerShareFor,
   currentRule,
   defaultSettings,
   producerLabel,
@@ -30,7 +31,7 @@ export { NET_BUCKETS, NET_BUCKET_LABEL, type NetBucket };
  *   IIBB           = bruto ajustado × alícuota IIBB
  *   comisión neta  = bruto ajustado − IIBB
  *   a pagar        = comisión neta × distribución ÷ IVA
- *   Un arreglo comercial del productor pisa la distribución.
+ *   El % de un manager pisa la distribución de ese segmento; si no hay, un arreglo comercial con fechas.
  *
  * GMA, por categoría (públicos, privados, SENEBI, cauciones):
  *   a pagar = (bruto − bruto × IIBB GMA) × retrocesión ÷ IVA   (hoy IIBB 0 y sin IVA: bruto × retrocesión)
@@ -246,14 +247,15 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
     const iibbRate = appliesIibb(g) ? rule.gma.iibb_rate : 0;
     const iibb = amount * iibbRate;
     const neto = amount - iibb;
+    const share = managerShareFor(settings, c, 'gma', placement.bucket) ?? g.share;
     return {
       alyc: 'GMA',
       ...placement,
       amount,
       iibb,
       neto,
-      aPagar: (neto * g.share) / iva,
-      share: g.share,
+      aPagar: (neto * share) / iva,
+      share,
       iva,
       iibbRate,
       agreement: false,
@@ -263,7 +265,8 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
   const bucket = placement.bucket;
   if (bucket === 'caucion') return { excluded: 'otro' };
   const agreement = agreementFor(settings, producerOf(c, settings), c.trade_date);
-  const share = agreement?.shares[bucket] ?? rule.buckets[bucket].share;
+  const managerShare = managerShareFor(settings, c, 'ieb', bucket);
+  const share = managerShare ?? agreement?.shares[bucket] ?? rule.buckets[bucket].share;
   const iva = ivaDivisor(bucket, currency, rule);
   const iibbRate = appliesIibb(rule.buckets[bucket]) ? rule.iibb_rate : 0;
   const iibb = amount * iibbRate;
@@ -278,7 +281,7 @@ export function netRow(c: ArancelCommission, settings: ArancelesSettings): NetRo
     share,
     iva,
     iibbRate,
-    agreement: agreement?.shares[bucket] != null,
+    agreement: managerShare == null && agreement?.shares[bucket] != null,
     ruleId: rule.id,
   };
 }

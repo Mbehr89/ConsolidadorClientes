@@ -102,6 +102,14 @@ export type ProducerAgreement = {
   created_at: string;
 };
 
+/** % del arancel de un manager, por segmento. Lo que no está cargado usa el estándar. */
+export type ManagerShares = {
+  /** Alias de la persona (MILI) o, si no tiene alias, el número de productor. */
+  manager: string;
+  ieb: Partial<Record<NetBucket, number>>;
+  gma: Partial<Record<GmaBucket, number>>;
+};
+
 /** Una cuenta pasa a otro productor desde una fecha (pisa lo que diga el archivo). */
 export type AccountTransfer = {
   id: string;
@@ -123,6 +131,8 @@ export type ArancelesSettings = {
   net_rules: NetRuleVersion[];
   producers: ProducerInfo[];
   agreements: ProducerAgreement[];
+  /** % del arancel por manager y segmento. Un casillero vacío usa el estándar de la alícuota. */
+  manager_shares: ManagerShares[];
   account_transfers: AccountTransfer[];
   person_aliases: PersonAlias[];
 };
@@ -166,6 +176,7 @@ export function defaultSettings(): ArancelesSettings {
     net_rules: [DEFAULT_NET_RULES],
     producers: [],
     agreements: [],
+    manager_shares: [],
     account_transfers: [],
     person_aliases: DEFAULT_PERSON_ALIASES,
   };
@@ -202,6 +213,7 @@ export function coerceSettings(raw: unknown): ArancelesSettings {
     net_rules: rules.length ? sortRules(rules) : [DEFAULT_NET_RULES],
     producers: arr(r.producers),
     agreements: arr(r.agreements),
+    manager_shares: coerceManagerShares(r.manager_shares),
     account_transfers: arr(r.account_transfers),
     person_aliases: Array.isArray(r.person_aliases)
       ? arr<PersonAlias>(r.person_aliases).map((a) => ({ alias: a.alias, nombres: arr<string>(a.nombres) }))
@@ -270,6 +282,67 @@ export function producerOf(c: ProducerSource, settings: ArancelesSettings): stri
     if (transfer) return transfer.productor_numero;
   }
   return fileProducerOf(c);
+}
+
+function pickRates<K extends string>(raw: unknown, keys: readonly K[]): Partial<Record<K, number>> {
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const out: Partial<Record<K, number>> = {};
+  for (const k of keys) {
+    const v = src[k];
+    if (typeof v === 'number' && v >= 0 && v <= 1) out[k] = v;
+  }
+  return out;
+}
+
+function coerceManagerShares(raw: unknown): ManagerShares[] {
+  const byKey = new Map<string, ManagerShares>();
+  for (const item of arr<Partial<ManagerShares>>(raw)) {
+    const manager = typeof item?.manager === 'string' ? item.manager.trim() : '';
+    if (!manager) continue;
+    const ieb = pickRates(item.ieb, NET_BUCKETS);
+    const gma = pickRates(item.gma, GMA_BUCKETS);
+    if (!Object.keys(ieb).length && !Object.keys(gma).length) continue;
+    const prev = byKey.get(personKey(manager));
+    byKey.set(personKey(manager), {
+      manager: prev?.manager || manager,
+      ieb: { ...prev?.ieb, ...ieb },
+      gma: { ...prev?.gma, ...gma },
+    });
+  }
+  return [...byKey.values()];
+}
+
+type ShareSource = Pick<ArancelCommission, 'alyc' | 'client_external_id' | 'trade_date' | 'details' | 'account_officer'>;
+
+/**
+ * % cargado para el manager de esta operación en un segmento.
+ * IEB se reconoce por el número de productor, su código o su nombre (alias).
+ * GMA, por el oficial de cuenta. `undefined` = usar el estándar.
+ */
+export function managerShareFor(
+  settings: ArancelesSettings,
+  c: ShareSource,
+  scope: 'ieb' | 'gma',
+  bucket: string
+): number | undefined {
+  const raw: string[] = [];
+  if (c.alyc.trim().toUpperCase() === 'IEB') {
+    const n = producerOf(c, settings);
+    if (n) {
+      raw.push(n);
+      const p = settings.producers.find((x) => x.numero === n);
+      if (p?.codigo) raw.push(p.codigo);
+      if (p?.nombre) raw.push(p.nombre);
+    }
+    if (c.details?.productor) raw.push(c.details.productor);
+  }
+  if (c.account_officer) raw.push(c.account_officer);
+  const keys = new Set(raw.map((v) => personKey(personAlias(v, settings) || v)));
+  const row = settings.manager_shares.find((s) => keys.has(personKey(s.manager)));
+  if (!row) return undefined;
+  const table = (scope === 'ieb' ? row.ieb : row.gma) as Record<string, number | undefined>;
+  const v = table[bucket];
+  return typeof v === 'number' ? v : undefined;
 }
 
 export function agreementFor(

@@ -12,8 +12,10 @@ import {
   GMA_BUCKET_LABEL,
   NET_BUCKETS,
   NET_BUCKET_LABEL,
+  currentRule,
   newSettingsId,
   personAlias,
+  personKey,
   producerLabel,
   type ArancelesSettings,
   type PersonAlias,
@@ -21,6 +23,7 @@ import {
   type GmaBucket,
   type NetBucket,
   type NetRuleVersion,
+  type ManagerShares,
   type ProducerAgreement,
   type ProducerInfo,
 } from '@/lib/aranceles/settings';
@@ -46,11 +49,13 @@ function PctInput({
   onChange,
   placeholder,
   className,
+  label,
 }: {
   value: number | undefined;
   onChange: (v: number | undefined) => void;
   placeholder?: string;
   className?: string;
+  label?: string;
 }) {
   const shown = value == null ? '' : String(Math.round(value * 1e6) / 1e4);
   const [text, setText] = useState(shown);
@@ -62,6 +67,7 @@ function PctInput({
         inputMode="decimal"
         value={text}
         placeholder={placeholder}
+        aria-label={label}
         onChange={(e) => {
           const t = e.target.value.replace(',', '.');
           setText(e.target.value);
@@ -238,7 +244,7 @@ function RulesSection({
     <Card>
       <SectionTitle
         title="Alícuotas de liquidación"
-        description="Cada versión rige desde su fecha hasta la siguiente; las operaciones se liquidan con la versión vigente a su fecha. En ambas ALYC: a pagar = (bruto − IIBB) × distribución o retrocesión ÷ IVA. La alícuota de IIBB es de la ALYC, y cada tipo se marca si la lleva o no. IEB: iguales para todos los productores salvo arreglo comercial. GMA se lee siempre sin IVA; cada tipo de instrumento se marca aparte si en el resumen hay que mostrarlo también con IVA. USD y dólar exterior usan la hoja dólares, pero se informan por separado."
+        description="Cada versión rige desde su fecha hasta la siguiente. En ambas ALYC: a pagar = (bruto − IIBB) × % del arancel ÷ IVA. El % de esta tabla es el estándar, el mismo para todos. El de cada manager se carga en la tabla de abajo. GMA se lee siempre sin IVA; cada tipo se marca aparte si en el resumen hay que mostrarlo también con IVA."
       />
       <CardContent className="space-y-6">
         {sorted.map((r) => (
@@ -278,7 +284,7 @@ function RulesSection({
             </div>
             <AlycRulesBlock
               title="IEB"
-              shareLabel="Distribución"
+              shareLabel="% del arancel"
               iibbRate={r.iibb_rate}
               onIibb={(v) => update(r.id, { iibb_rate: v })}
               rows={NET_BUCKETS.map((b) => ({ key: b, label: NET_BUCKET_LABEL[b], rule: r.buckets[b] }))}
@@ -286,7 +292,7 @@ function RulesSection({
             />
             <AlycRulesBlock
               title="GMA"
-              shareLabel="Retrocesión"
+              shareLabel="% del arancel"
               iibbRate={r.gma.iibb_rate}
               onIibb={(v) => update(r.id, { gma: { ...r.gma, iibb_rate: v } })}
               showLlevaIva
@@ -519,6 +525,140 @@ function ProducersSection({
   );
 }
 
+function pctNumber(v: number): string {
+  return String(Math.round(v * 1e6) / 1e4);
+}
+
+function ManagerSharesSection({
+  shares,
+  aliases,
+  producers,
+  producerInfo,
+  standardIeb,
+  standardGma,
+  onChange,
+}: {
+  shares: ManagerShares[];
+  aliases: PersonAlias[];
+  producers: ProducerSummary[];
+  producerInfo: ProducerInfo[];
+  standardIeb: Record<NetBucket, BucketRule>;
+  standardGma: Record<GmaBucket, BucketRule>;
+  onChange: (shares: ManagerShares[]) => void;
+}) {
+  const rows = useMemo(() => {
+    const list = aliases.map((a) => ({ key: a.alias, label: a.alias }));
+    const known = new Set(list.map((r) => personKey(r.key)));
+    const aliasSettings = { person_aliases: aliases };
+    for (const p of producers) {
+      const saved = producerInfo.find((i) => i.numero === p.numero);
+      const resolved =
+        personAlias(saved?.nombre || p.nombresEnArchivos[0], aliasSettings) ||
+        (saved?.codigo ? personAlias(saved.codigo, aliasSettings) : null) ||
+        p.numero;
+      if (known.has(personKey(resolved)) || known.has(personKey(p.numero))) continue;
+      known.add(personKey(p.numero));
+      const name = saved?.codigo || personAlias(saved?.nombre || p.nombresEnArchivos[0], aliasSettings);
+      list.push({ key: p.numero, label: name && name !== p.numero ? `${p.numero} · ${name}` : p.numero });
+    }
+    return list;
+  }, [aliases, producers, producerInfo]);
+
+  const setCell = (manager: string, scope: 'ieb' | 'gma', bucket: string, value: number | undefined) => {
+    const next = shares.map((s) => ({ manager: s.manager, ieb: { ...s.ieb }, gma: { ...s.gma } }));
+    let row = next.find((s) => personKey(s.manager) === personKey(manager));
+    if (!row) {
+      row = { manager, ieb: {}, gma: {} };
+      next.push(row);
+    }
+    const table = scope === 'ieb' ? row.ieb : row.gma;
+    if (value == null) delete table[bucket as keyof typeof table];
+    else (table as Record<string, number>)[bucket] = value;
+    onChange(next.filter((s) => Object.keys(s.ieb).length > 0 || Object.keys(s.gma).length > 0));
+  };
+
+  const cell = (manager: string, scope: 'ieb' | 'gma', bucket: string): number | undefined => {
+    const row = shares.find((s) => personKey(s.manager) === personKey(manager));
+    const table = (scope === 'ieb' ? row?.ieb : row?.gma) as Record<string, number | undefined> | undefined;
+    return table?.[bucket];
+  };
+
+  return (
+    <Card>
+      <SectionTitle
+        title="Porcentaje por manager"
+        description="Dejá en blanco lo que sigue el estándar: el número gris es el de la tabla de arriba. Cargá sólo lo que cambia. Por ejemplo, FCI IEB al 75% para un manager y al 70% para otro. En IEB se reconoce al manager por el productor o su alias; en GMA, por el oficial de cuenta."
+      />
+      <CardContent>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Agregá un nombre en la tabla de personas para poder cargarle un porcentaje.
+          </p>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full min-w-[1100px] text-sm">
+              <thead className="border-b text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="sticky left-0 z-10 bg-card p-2 text-left font-medium" rowSpan={2}>
+                    Manager
+                  </th>
+                  <th className="p-2 text-center font-medium" colSpan={NET_BUCKETS.length}>
+                    IEB
+                  </th>
+                  <th className="p-2 text-center font-medium" colSpan={GMA_BUCKETS.length}>
+                    GMA
+                  </th>
+                </tr>
+                <tr>
+                  {NET_BUCKETS.map((b) => (
+                    <th key={b} className="p-2 text-right font-medium">
+                      {NET_BUCKET_LABEL[b]}
+                    </th>
+                  ))}
+                  {GMA_BUCKETS.map((b) => (
+                    <th key={`g-${b}`} className="p-2 text-right font-medium">
+                      {GMA_BUCKET_LABEL[b]}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key} className="border-b border-border/50 last:border-0">
+                    <td className="sticky left-0 z-10 bg-card p-2 font-medium">{r.label}</td>
+                    {NET_BUCKETS.map((b) => (
+                      <td key={b} className="p-2">
+                        <PctInput
+                          className="ml-auto w-24"
+                          value={cell(r.key, 'ieb', b)}
+                          placeholder={pctNumber(standardIeb[b].share)}
+                          label={`${NET_BUCKET_LABEL[b]} de ${r.label}`}
+                          onChange={(v) => setCell(r.key, 'ieb', b, v)}
+                        />
+                      </td>
+                    ))}
+                    {GMA_BUCKETS.map((b) => (
+                      <td key={`g-${b}`} className="p-2">
+                        <PctInput
+                          className="ml-auto w-24"
+                          value={cell(r.key, 'gma', b)}
+                          placeholder={pctNumber(standardGma[b].share)}
+                          label={`${GMA_BUCKET_LABEL[b]} GMA de ${r.label}`}
+                          onChange={(v) => setCell(r.key, 'gma', b, v)}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AgreementsSection({
   agreements,
   producerOptions,
@@ -538,7 +678,7 @@ function AgreementsSection({
     <Card>
       <SectionTitle
         title="Arreglos comerciales"
-        description="Distribución distinta a la estándar para un productor en un rango de fechas. Sólo pisa los tipos que completes; el resto sigue con la alícuota general."
+        description="Sólo si el % de un productor cambia en un rango de fechas y ese casillero está vacío en la tabla por manager. Si el manager ya tiene ese tipo cargado, manda el de la tabla."
       />
       <CardContent className="space-y-4">
         {agreements.length > 0 && (
@@ -887,6 +1027,15 @@ export default function ArancelesConfiguracionPage() {
       {error && <ErrorBlock message={error} />}
 
       <RulesSection rules={draft.net_rules} currentId={data.currentRules.id} onChange={(net_rules) => patch({ net_rules })} />
+      <ManagerSharesSection
+        shares={draft.manager_shares}
+        aliases={draft.person_aliases}
+        producers={data.producers}
+        producerInfo={draft.producers}
+        standardIeb={currentRule(draft).buckets}
+        standardGma={currentRule(draft).gma.buckets}
+        onChange={(manager_shares) => patch({ manager_shares })}
+      />
       <AliasesSection aliases={draft.person_aliases} onChange={(person_aliases) => patch({ person_aliases })} />
       <ProducersSection
         producers={data.producers}

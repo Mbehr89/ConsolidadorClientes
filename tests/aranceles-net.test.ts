@@ -305,6 +305,63 @@ describe('aranceles: configuración del neto', () => {
     expect(r.agreementRows).toBe(1);
   });
 
+  it('el % de un manager pisa el estándar sólo en ese segmento y para esa persona', () => {
+    const settings = base();
+    settings.producers.push({ numero: '7', codigo: null, nombre: 'Milagros Behr', notas: null });
+    settings.manager_shares.push({ manager: 'MILI', ieb: { fci_ieb: 0.75 }, gma: { privado: 0.5 } });
+    settings.manager_shares.push({ manager: '8', ieb: { fci_ieb: 0.8 }, gma: {} });
+    const ieb = load(emptyHistory(), 'acdi', [
+      row('1', 100, 'ARS', { operation: 'FCI IEB', details: { productor: 'Milagros Behr', productor_numero: '7' } }),
+      row('2', 100, 'ARS', {
+        client: 'Otro',
+        clientExternalId: '2',
+        operation: 'FCI IEB',
+        details: { productor: 'Productor 8', productor_numero: '8' },
+      }),
+    ]);
+    const privado = load(emptyHistory(), 'aranceles_privado', [
+      row('3', 100, 'ARS', { operation: 'PRIVADO', details: { productor: 'Milagros Behr', productor_numero: '7' } }),
+    ]);
+    const gma = load(emptyHistory(), 'gma', [
+      row('4', 100, 'ARS', { instrument: 'GGAL', operation: 'COMPRA', accountOfficer: 'MILI' }),
+      row('5', 100, 'ARS', {
+        client: 'Otro',
+        clientExternalId: '5',
+        instrument: 'GGAL',
+        operation: 'COMPRA',
+        accountOfficer: 'MARTIN',
+      }),
+    ], 'GMA');
+    expect(netAmountOf(ieb.commissions[0]!, settings)).toBeCloseTo(94.5 * 0.75, 10);
+    expect(netAmountOf(ieb.commissions[1]!, settings)).toBeCloseTo(94.5 * 0.8, 10);
+    expect(netAmountOf(privado.commissions[0]!, settings)).toBeCloseTo(94.5 * 0.65, 10);
+    expect(netAmountOf(gma.commissions[0]!, settings)).toBeCloseTo(50, 10);
+    expect(netAmountOf(gma.commissions[1]!, settings)).toBeCloseTo(60, 10);
+  });
+
+  it('el % cargado para el manager pisa un arreglo con fechas en ese segmento', () => {
+    const settings = base();
+    settings.producers.push({ numero: '7', codigo: null, nombre: 'Milagros Behr', notas: null });
+    settings.agreements.push({
+      id: 'a1',
+      productor_numero: '7',
+      valid_from: '2026-01-01',
+      valid_to: null,
+      shares: { privado: 0.8 },
+      notas: null,
+      created_at: '',
+    });
+    settings.manager_shares.push({ manager: 'MILI', ieb: { privado: 0.75 }, gma: {} });
+    const h = load(emptyHistory(), 'aranceles_privado', [
+      row('1', 100, 'ARS', { operation: 'PRIVADO', details: { productor: 'Milagros Behr', productor_numero: '7' } }),
+    ]);
+    expect(netAmountOf(h.commissions[0]!, settings)).toBeCloseTo(94.5 * 0.75, 10);
+    const kept = coerceSettings({
+      manager_shares: [{ manager: 'MILI', ieb: { fci_ieb: 0.75, privado: 2 }, gma: {} }],
+    });
+    expect(kept.manager_shares).toEqual([{ manager: 'MILI', ieb: { fci_ieb: 0.75 }, gma: {} }]);
+  });
+
   it('un cambio de cuenta registrado pisa el productor del archivo desde su fecha', () => {
     const settings = base();
     settings.account_transfers.push({
