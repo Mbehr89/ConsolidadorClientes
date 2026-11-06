@@ -447,9 +447,18 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
         if (applied.duplicates) warnings.push(`${applied.duplicates} operaciones ya estaban en el historial`);
         if (applied.enriched) warnings.push(`a ${applied.enriched} de ellas se les completó el productor / detalle`);
         if (applied.repeatedInFile) warnings.push(`${applied.repeatedInFile} líneas repetidas dentro del archivo`);
-        if (conflicts) {
+        const reissued = applied.conflicts.filter((c) =>
+          c.differences.some((d) => d.startsWith('ya cargada con el boleto'))
+        ).length;
+        const otherConflicts = conflicts - reissued;
+        if (reissued) {
           warnings.push(
-            `${conflicts} con un n° de operación ya cargado pero con datos distintos: no se importaron (revisalas en Importar)`
+            `${reissued} ya estaban con otro número de boleto: no se importaron (revisalas en Importar)`
+          );
+        }
+        if (otherConflicts) {
+          warnings.push(
+            `${otherConflicts} con un n° de operación ya cargado pero con datos distintos: no se importaron (revisalas en Importar)`
           );
         }
         record = {

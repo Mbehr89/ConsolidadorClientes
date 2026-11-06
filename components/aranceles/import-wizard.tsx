@@ -165,7 +165,8 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
       {success && success.conflictCount > 0 && (
         <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/20">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-            {success.conflictCount} operaciones no se importaron: su n° ya estaba cargado con otros datos
+            {success.conflictCount} operaciones no se importaron: el n° ya estaba con otros datos, o la misma
+            operación ya estaba con otro boleto
             {success.conflictCount > success.conflicts.length ? ` (se muestran ${success.conflicts.length})` : ''}.
           </p>
           <ConflictList conflicts={success.conflicts} />

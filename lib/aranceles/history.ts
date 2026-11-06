@@ -126,6 +126,8 @@ export type ApplyImportResult = {
  *   otra fuente de la operación;
  * - mismo número con datos distintos → conflicto: no se agrega ni se pisa, se informa.
  *   Excepción ACDI: esas planillas antes no traían fecha. El mismo ID se actualiza con el año y mes nuevos;
+ * - otro número, pero misma cuenta, fecha, instrumento y arancel → conflicto: IEB a veces cambia el
+ *   boleto entre un archivo y el siguiente. No se suma de nuevo y se informa el boleto que ya estaba;
  * - línea repetida dentro del mismo archivo → se guarda una sola vez.
  * No recalcula tarifas: llamar a `runFeeAnalysis` después.
  */
@@ -135,10 +137,15 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
 
   const byOperation = new Map<string, ArancelCommission[]>();
   const byContent = new Map<string, ArancelCommission[]>();
+  /** Operaciones ya guardadas, por contenido. Sirve para reconocer la misma operación con otro boleto. */
+  const byFingerprint = new Map<string, ArancelCommission[]>();
   for (const c of history.commissions) {
     const op = operationKey(c);
-    if (op) byOperation.set(op, [...(byOperation.get(op) ?? []), c]);
-    else byContent.set(contentKey(c), [...(byContent.get(contentKey(c)) ?? []), c]);
+    if (op) {
+      byOperation.set(op, [...(byOperation.get(op) ?? []), c]);
+      const fp = contentKey(c);
+      byFingerprint.set(fp, [...(byFingerprint.get(fp) ?? []), c]);
+    } else byContent.set(contentKey(c), [...(byContent.get(contentKey(c)) ?? []), c]);
   }
 
   const importId = newId('imp');
@@ -282,6 +289,22 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
         existing_commission: prev.commission,
         incoming_commission: c.commission,
         existing_import_id: prev.import_id,
+      });
+      return;
+    }
+    const twin =
+      alycKey(c.alyc) === 'ieb'
+        ? (byFingerprint.get(contentKey(c)) ?? []).find((e) => operationKey(e) !== op)
+        : undefined;
+    if (twin) {
+      conflicts.push({
+        op_number: c.op_number ?? '',
+        client: c.client,
+        trade_date: c.trade_date,
+        differences: [`ya cargada con el boleto ${twin.op_number}`],
+        existing_commission: twin.commission,
+        incoming_commission: c.commission,
+        existing_import_id: twin.import_id,
       });
       return;
     }

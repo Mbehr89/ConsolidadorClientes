@@ -118,7 +118,7 @@ export function IebPeriodWizard({ onImported }: { onImported?: () => void }) {
                     ? r.error ?? 'vacío (0 filas)'
                     : `${r.rowCount} operaciones nuevas (${r.filename})` +
                       (r.duplicates ? ` · ${r.duplicates} ya estaban` : '') +
-                      (r.conflicts ? ` · ${r.conflicts} con n° ya cargado y datos distintos (no importadas)` : '')}
+                      (r.conflicts ? ` · ${r.conflicts} no importadas (n° o boleto en conflicto)` : '')}
               </li>
             ))}
           </ul>

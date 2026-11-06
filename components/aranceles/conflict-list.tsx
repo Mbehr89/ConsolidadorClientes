@@ -9,9 +9,9 @@ export function ConflictList({ conflicts }: { conflicts: readonly DedupConflict[
   return (
     <div className="space-y-2 text-sm">
       <p className="text-muted-foreground">
-        Estos números de operación ya estaban en el historial con otros datos, o se repiten dentro del mismo archivo
-        con datos distintos, así que no se importaron (ni se pisó lo anterior). Si el archivo nuevo es el correcto,
-        borrá la importación anterior y volvé a sincronizar o subir este archivo.
+        No se importaron y no se pisó lo anterior. O el número ya estaba con otros datos, o se repite dentro del
+        archivo, o es la misma operación (cuenta, fecha, instrumento y arancel) que ya estaba con otro boleto. Si el
+        archivo nuevo es el correcto, borrá la importación anterior y volvé a sincronizar o subir este archivo.
       </p>
       <div className="max-h-64 overflow-auto rounded-md border border-border/70 bg-card">
         <table className="w-full min-w-[640px] text-xs">

@@ -125,8 +125,9 @@ export default function ArancelesImportarPage() {
           <CardTitle className="text-lg">Importaciones en el historial ({imports.length})</CardTitle>
           <CardDescription>
             Cada operación se identifica por ALYC + n° de boleto / ID. Si un archivo trae operaciones que ya estaban,
-            no se duplican; si trae un n° ya cargado con datos distintos, no se importa y queda como conflicto para
-            revisar. Al borrar un archivo se conservan las operaciones que también vinieron en otro.
+            no se duplican. Si trae un n° ya cargado con datos distintos, o la misma operación con otro boleto, no se
+            importa y queda como conflicto para revisar. Al borrar un archivo se conservan las operaciones que también
+            vinieron en otro.
           </CardDescription>
           {data && <IntegrityBadge integrity={data.integrity} imports={imports} />}
           <div className="pt-2">

@@ -119,6 +119,40 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     expect(again.conflicts).toHaveLength(0);
   });
 
+  it('la misma operación con otro boleto no se suma y queda como conflicto', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('97978301', { instrument: 'GOOGL', date: '2026-10-01', clientExternalId: '334190', amount: 149910, commission: 149910, quantity: null })],
+      'aranceles_privado'
+    );
+    const second = load(
+      first.history,
+      'IEB',
+      [
+        row('105610553', { instrument: 'GOOGL', date: '2026-10-01', clientExternalId: '334190', amount: 149910, commission: 149910, quantity: null }),
+        row('105700000', { instrument: 'MSFT', date: '2026-10-15', clientExternalId: '334190', amount: 100, commission: 100, quantity: null }),
+      ],
+      'aranceles_privado'
+    );
+    expect(second.inserted).toBe(1);
+    expect(second.conflicts).toHaveLength(1);
+    expect(second.conflicts[0]?.op_number).toBe('105610553');
+    expect(second.conflicts[0]?.differences).toEqual(['ya cargada con el boleto 97978301']);
+    expect(second.history.commissions.map((c) => c.op_number).sort()).toEqual(['105700000', '97978301']);
+  });
+
+  it('dos boletos distintos dentro del mismo archivo se guardan los dos', () => {
+    const r = load(
+      emptyHistory(),
+      'IEB',
+      [row('1', { commission: 10, amount: 10 }), row('2', { commission: 10, amount: 10 })],
+      'aranceles_privado'
+    );
+    expect(r.inserted).toBe(2);
+    expect(r.conflicts).toHaveLength(0);
+  });
+
   it('mismo n° con datos distintos: no se duplica ni se pisa, queda como conflicto', () => {
     const first = load(emptyHistory(), 'GMA', [row('500', { commission: 5 })]);
     const second = load(first.history, 'GMA', [row('500', { commission: 7.5 })]);

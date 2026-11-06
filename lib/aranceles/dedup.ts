@@ -6,6 +6,8 @@ import type { ArancelCommission } from '@/lib/aranceles/types';
  * - Con número (boleto GMA / ID IEB): la clave es ALYC + familia de planilla + número normalizado.
  *   Ese número es único por ALYC; si vuelve a llegar con los mismos datos es un duplicado y si llega
  *   con datos distintos es un conflicto (no se pisa ni se duplica: se informa).
+ *   Si el número cambió pero la operación es la misma (cuenta, fecha, instrumento y arancel), también
+ *   es un conflicto: no se suma de nuevo y se informa el boleto que ya estaba.
  * - Sin número: se compara el contenido completo y se cuentan ocurrencias (dos filas idénticas en una
  *   planilla pueden ser legítimas; al reimportar se descuentan las que ya están).
  */
