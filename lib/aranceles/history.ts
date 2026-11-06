@@ -48,15 +48,18 @@ export function coerceHistory(raw: unknown): ArancelesHistory {
     updated_at: typeof r.updated_at === 'string' ? r.updated_at : new Date().toISOString(),
     imports: Array.isArray(r.imports) ? r.imports.map((i) => ({ ...i, alyc: currentAlycName(i.alyc) })) : [],
     commissions: Array.isArray(r.commissions)
-      ? r.commissions.map((c) => ({
-          ...c,
-          alyc: currentAlycName(c.alyc),
-          currency: currentCurrency(c.currency),
-          commission_currency: currentCurrency(c.commission_currency ?? c.currency),
-          commission_fx: c.commission_fx ?? null,
-          trading_group: c.trading_group ?? null,
-          also_in_imports: Array.isArray(c.also_in_imports) ? c.also_in_imports : [],
-        }))
+      ? collapseReissuedBoletos(
+          r.commissions.map((c) => ({
+            ...c,
+            alyc: currentAlycName(c.alyc),
+            currency: currentCurrency(c.currency),
+            commission_currency: currentCurrency(c.commission_currency ?? c.currency),
+            commission_fx: c.commission_fx ?? null,
+            trading_group: c.trading_group ?? null,
+            also_in_imports: Array.isArray(c.also_in_imports) ? c.also_in_imports : [],
+          })),
+          Array.isArray(r.imports) ? r.imports : []
+        )
       : [],
     fee_schedules: Array.isArray(r.fee_schedules)
       ? r.fee_schedules.map((s) => ({ ...s, alyc: currentAlycName(s.alyc), currency: currentCurrency(s.currency) }))
@@ -67,6 +70,33 @@ export function coerceHistory(raw: unknown): ArancelesHistory {
         : {},
     settings: coerceSettings(r.settings),
   };
+}
+
+/**
+ * IEB a veces cambia el boleto de una operación entre un archivo y el siguiente.
+ * Si la misma operación (cuenta, fecha, instrumento y arancel) está en dos importaciones,
+ * queda sólo la de la importación más nueva. Dos boletos en el mismo archivo se conservan.
+ */
+export function collapseReissuedBoletos(
+  commissions: readonly ArancelCommission[],
+  imports: readonly { id: string; imported_at: string }[]
+): ArancelCommission[] {
+  const importedAt = new Map(imports.map((i) => [i.id, i.imported_at]));
+  const groups = new Map<string, ArancelCommission[]>();
+  for (const c of commissions) {
+    if (alycKey(c.alyc) !== 'ieb' || !operationKey(c)) continue;
+    const list = groups.get(contentKey(c)) ?? [];
+    list.push(c);
+    groups.set(contentKey(c), list);
+  }
+  const drop = new Set<string>();
+  for (const list of groups.values()) {
+    const fileIds = new Set(list.map((c) => c.import_id));
+    if (fileIds.size < 2) continue;
+    const latest = [...fileIds].sort((a, b) => (importedAt.get(b) ?? '').localeCompare(importedAt.get(a) ?? ''))[0]!;
+    for (const c of list) if (c.import_id !== latest) drop.add(c.id);
+  }
+  return drop.size === 0 ? [...commissions] : commissions.filter((c) => !drop.has(c.id));
 }
 
 export function clientKey(name: string): string {

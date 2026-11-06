@@ -78,11 +78,15 @@ const g = globalThis as typeof globalThis & {
   __arancelesWriteChain?: Promise<unknown>;
 };
 
-function parseHistoryText(text: string): ArancelesHistory {
-  if (!text.trim()) return emptyHistory();
+function parseHistoryText(text: string): { history: ArancelesHistory; collapsed: number } {
+  if (!text.trim()) return { history: emptyHistory(), collapsed: 0 };
   try {
-    return coerceHistory(JSON.parse(text));
-  } catch {
+    const parsed = JSON.parse(text) as { commissions?: unknown };
+    const before = Array.isArray(parsed.commissions) ? parsed.commissions.length : 0;
+    const history = coerceHistory(parsed);
+    return { history, collapsed: Math.max(0, before - history.commissions.length) };
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('El historial')) throw err;
     throw new Error('El historial de aranceles no es un JSON válido. Revisalo en Drive antes de seguir.');
   }
 }
@@ -105,7 +109,11 @@ async function loadFromDrive(config: ArancelesDriveConfig, token: string): Promi
     return cached;
   }
   const text = await downloadFileText(fileId, token);
-  const loaded = { history: parseHistoryText(text), fileId, modifiedTime };
+  const { history, collapsed } = parseHistoryText(text);
+  if (collapsed > 0) {
+    return saveToDrive(config, token, fileId, { ...history, updated_at: new Date().toISOString() });
+  }
+  const loaded = { history, fileId, modifiedTime };
   g.__arancelesCache = loaded;
   return loaded;
 }
@@ -140,7 +148,9 @@ async function saveToDrive(
 async function loadFromLocal(): Promise<Loaded> {
   try {
     const text = await fs.readFile(LOCAL_HISTORY_FILE, 'utf8');
-    return { history: parseHistoryText(text), fileId: null, modifiedTime: null };
+    const { history, collapsed } = parseHistoryText(text);
+    if (collapsed > 0) await saveToLocal(history);
+    return { history, fileId: null, modifiedTime: null };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return { history: emptyHistory(), fileId: null, modifiedTime: null };

@@ -1,6 +1,6 @@
 ﻿import { describe, expect, it } from 'vitest';
 import { alycKey, findDuplicateGroups, findSharedIdGroups, normalizeOpNumber, operationKey } from '@/lib/aranceles/dedup';
-import { applyImport, coerceHistory, emptyHistory, removeImports } from '@/lib/aranceles/history';
+import { applyImport, coerceHistory, collapseReissuedBoletos, emptyHistory, removeImports } from '@/lib/aranceles/history';
 import type { ArancelesHistory, NormalizedRow } from '@/lib/aranceles/types';
 
 function row(op: string | null, over: Partial<NormalizedRow> = {}): NormalizedRow {
@@ -140,6 +140,37 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     expect(second.conflicts[0]?.op_number).toBe('105610553');
     expect(second.conflicts[0]?.differences).toEqual(['ya cargada con el boleto 97978301']);
     expect(second.history.commissions.map((c) => c.op_number).sort()).toEqual(['105700000', '97978301']);
+  });
+
+  it('al leer el historial deja una sola copia si el boleto cambió entre archivos', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('97978301', { instrument: 'GOOGL', amount: 149910, commission: 149910, quantity: null })],
+      'aranceles_privado'
+    );
+    const old = first.history.commissions[0]!;
+    const oldImport = { ...first.history.imports[0]!, imported_at: '2026-10-12T00:00:00.000Z' };
+    const nextImport = { ...oldImport, id: 'imp_new', imported_at: '2026-11-06T00:00:00.000Z' };
+    const cleaned = coerceHistory({
+      ...first.history,
+      imports: [oldImport, nextImport],
+      commissions: [old, { ...old, id: 'nuevo', op_number: '105610553', import_id: 'imp_new' }],
+    });
+    expect(cleaned.commissions.map((c) => c.op_number)).toEqual(['105610553']);
+  });
+
+  it('dos boletos en la misma importación no se borran al leer', () => {
+    const loaded = load(
+      emptyHistory(),
+      'IEB',
+      [
+        row('58966709', { instrument: 'PAMP', amount: 21380, commission: 21380 }),
+        row('58966976', { instrument: 'PAMP', amount: 21380, commission: 21380 }),
+      ],
+      'aranceles_privado'
+    );
+    expect(collapseReissuedBoletos(loaded.history.commissions, loaded.history.imports)).toHaveLength(2);
   });
 
   it('dos boletos distintos dentro del mismo archivo se guardan los dos', () => {
