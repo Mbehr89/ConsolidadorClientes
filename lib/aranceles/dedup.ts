@@ -120,6 +120,17 @@ export function contentKey(c: Identifiable): string {
   return `${alycKey(c.alyc)}|${idScope(c.segment)}|${contentFingerprint(c)}`;
 }
 
+/**
+ * Misma operación aunque IEB haya recalculado el bruto de la orden.
+ * El arancel, la cuenta, la fecha y el instrumento no cambian; el importe de la operación a veces sí.
+ */
+export function reissueKey(c: Identifiable): string {
+  const body = FINGERPRINT_FIELDS.filter((f) => f.label !== 'bruto')
+    .map((f) => f.value(c))
+    .join('|');
+  return `${alycKey(c.alyc)}|${idScope(c.segment)}|${body}`;
+}
+
 export type DedupConflict = {
   op_number: string;
   client: string;

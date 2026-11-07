@@ -160,6 +160,25 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     expect(cleaned.commissions.map((c) => c.op_number)).toEqual(['105610553']);
   });
 
+  it('el mismo arancel con otro boleto no entra aunque IEB haya cambiado el bruto', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('98015868', { instrument: 'YMCXO', date: '2026-10-05', clientExternalId: '352723', amount: 325786.52, commission: 206.98, quantity: null, currency: 'USD' })],
+      'aranceles_privado'
+    );
+    const second = load(
+      first.history,
+      'IEB',
+      [row('105659661', { instrument: 'YMCXO', date: '2026-10-05', clientExternalId: '352723', amount: 332823.84, commission: 206.98, quantity: null, currency: 'USD' })],
+      'aranceles_privado'
+    );
+    expect(second.inserted).toBe(0);
+    expect(second.conflicts).toHaveLength(1);
+    expect(second.conflicts[0]?.differences).toEqual(['ya cargada con el boleto 98015868']);
+    expect(second.history.commissions).toHaveLength(1);
+  });
+
   it('dos boletos en la misma importación no se borran al leer', () => {
     const loaded = load(
       emptyHistory(),

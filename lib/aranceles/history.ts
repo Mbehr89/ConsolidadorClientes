@@ -9,6 +9,7 @@ import {
   alycKey,
   contentFingerprint,
   contentKey,
+  reissueKey,
   currentAlycName,
   currentCurrency,
   fingerprintDifferences,
@@ -74,7 +75,7 @@ export function coerceHistory(raw: unknown): ArancelesHistory {
 
 /**
  * IEB a veces cambia el boleto de una operación entre un archivo y el siguiente.
- * Si la misma operación (cuenta, fecha, instrumento y arancel) está en dos importaciones,
+ * Si la misma operación (cuenta, fecha, instrumento y arancel, aunque cambie el bruto) está en dos importaciones,
  * queda sólo la de la importación más nueva. Dos boletos en el mismo archivo se conservan.
  */
 export function collapseReissuedBoletos(
@@ -85,9 +86,9 @@ export function collapseReissuedBoletos(
   const groups = new Map<string, ArancelCommission[]>();
   for (const c of commissions) {
     if (alycKey(c.alyc) !== 'ieb' || !operationKey(c)) continue;
-    const list = groups.get(contentKey(c)) ?? [];
+    const list = groups.get(reissueKey(c)) ?? [];
     list.push(c);
-    groups.set(contentKey(c), list);
+    groups.set(reissueKey(c), list);
   }
   const drop = new Set<string>();
   for (const list of groups.values()) {
@@ -156,7 +157,7 @@ export type ApplyImportResult = {
  *   otra fuente de la operación;
  * - mismo número con datos distintos → conflicto: no se agrega ni se pisa, se informa.
  *   Excepción ACDI: esas planillas antes no traían fecha. El mismo ID se actualiza con el año y mes nuevos;
- * - otro número, pero misma cuenta, fecha, instrumento y arancel → conflicto: IEB a veces cambia el
+ * - otro número, pero misma cuenta, fecha, instrumento y arancel (aunque cambie el bruto) → conflicto: IEB a veces cambia el
  *   boleto entre un archivo y el siguiente. No se suma de nuevo y se informa el boleto que ya estaba;
  * - línea repetida dentro del mismo archivo → se guarda una sola vez.
  * No recalcula tarifas: llamar a `runFeeAnalysis` después.
@@ -173,7 +174,7 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     const op = operationKey(c);
     if (op) {
       byOperation.set(op, [...(byOperation.get(op) ?? []), c]);
-      const fp = contentKey(c);
+      const fp = reissueKey(c);
       byFingerprint.set(fp, [...(byFingerprint.get(fp) ?? []), c]);
     } else byContent.set(contentKey(c), [...(byContent.get(contentKey(c)) ?? []), c]);
   }
@@ -324,7 +325,7 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     }
     const twin =
       alycKey(c.alyc) === 'ieb'
-        ? (byFingerprint.get(contentKey(c)) ?? []).find((e) => operationKey(e) !== op)
+        ? (byFingerprint.get(reissueKey(c)) ?? []).find((e) => operationKey(e) !== op)
         : undefined;
     if (twin) {
       conflicts.push({
