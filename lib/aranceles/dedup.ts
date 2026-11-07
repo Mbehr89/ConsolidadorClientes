@@ -8,6 +8,8 @@ import type { ArancelCommission } from '@/lib/aranceles/types';
  *   con datos distintos es un conflicto (no se pisa ni se duplica: se informa).
  *   Si el número cambió pero la operación es la misma (cuenta, fecha, instrumento y arancel), también
  *   es un conflicto: no se suma de nuevo y se informa el boleto que ya estaba.
+ *   En FCI IEB alcanza con cuenta, día, fondo y moneda: IEB reemite el boleto y cambia el arancel
+ *   y la cantidad. Las dos copias no se suman, aunque vengan en el mismo archivo.
  * - Sin número: se compara el contenido completo y se cuentan ocurrencias (dos filas idénticas en una
  *   planilla pueden ser legítimas; al reimportar se descuentan las que ya están).
  */
@@ -129,6 +131,29 @@ export function reissueKey(c: Identifiable): string {
     .map((f) => f.value(c))
     .join('|');
   return `${alycKey(c.alyc)}|${idScope(c.segment)}|${body}`;
+}
+
+/**
+ * Fondo de una posición ACDI. "Clase B" y "Clase B ARS" son el mismo fondo:
+ * IEB a veces le agrega la moneda al nombre cuando reemite el boleto.
+ */
+export function fundKey(instrument: string | null | undefined): string {
+  const folded = fold(instrument ?? '');
+  const stripped = folded.replace(/(ars|usdext|usdc|usd)$/, '');
+  return stripped || folded;
+}
+
+/**
+ * Una posición de FCI IEB: cuenta + día + fondo + moneda.
+ * No entra el boleto, ni el arancel, ni la cantidad: al reemitir, IEB cambia los tres.
+ * `null` si no es ACDI.
+ */
+export function acdiPositionKey(c: Identifiable & { commission_currency?: string | null }): string | null {
+  if (alycKey(c.alyc) !== 'ieb' || idScope(c.segment) !== 'acdi') return null;
+  const client = clientId(c);
+  const fund = fundKey(c.instrument);
+  if (!client || !c.trade_date || !fund) return null;
+  return `${client}|${c.trade_date}|${fund}|${text(c.commission_currency || c.currency)}`;
 }
 
 export type DedupConflict = {

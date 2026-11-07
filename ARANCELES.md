@@ -45,8 +45,9 @@ Con boleto o ID, la clave es ALYC + familia de planilla + número. Público y pr
 - Mismo número y mismos datos: ya estaba. No se duplica.
 - Mismo número y otros datos: conflicto. No se pisa, salvo ACDI.
 - Sin número: se compara el contenido y se cuentan las repeticiones.
-- Otro número, pero misma cuenta, fecha, instrumento, arancel y moneda: es la misma operación. IEB a veces cambia el boleto y también el bruto de la orden. No se suma. Queda en Importar como «ya cargada con el boleto …». Al leer el historial se deja sólo la copia de la importación más nueva.
-- Dos boletos distintos dentro del mismo archivo se conservan los dos.
+- Otro número, pero misma cuenta, fecha, instrumento, arancel y moneda: es la misma operación de títulos. IEB a veces cambia el boleto y también el bruto de la orden. No se suma. Queda en Importar como «ya cargada con el boleto …». Al leer el historial se deja sólo la copia de la importación más nueva.
+- Dos boletos de títulos dentro del mismo archivo se conservan: son dos operaciones.
+- FCI IEB es una posición por cuenta, día, fondo y moneda. Al reemitir, IEB cambia el boleto, el arancel y la cantidad, y a veces le agrega «ARS» o «USD» al nombre del fondo. No se suman las dos copias, aunque vengan en el mismo archivo. Queda la que volvió a aparecer en el archivo más nuevo. Si las dos se vieron juntas por última vez, queda el boleto más alto. Un archivo posterior pisa esa posición: no abre una fila nueva.
 
 ACDI es la excepción del mismo ID: si el ID ya existe, se actualiza la fecha y el resto de los datos. No es conflicto. La fecha sale de las columnas Año y Mes (se guarda como día 1 de ese mes). Sin esas columnas se usa la fecha de respaldo del archivo.
 

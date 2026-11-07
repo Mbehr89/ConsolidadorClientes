@@ -179,6 +179,128 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     expect(second.history.commissions).toHaveLength(1);
   });
 
+  it('FCI: dos boletos de la misma posición en un archivo quedan en el más alto', () => {
+    const r = load(
+      emptyHistory(),
+      'IEB',
+      [
+        row('74593157', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 105452.87, quantity: 9091601.69, amount: 111751867.84 }),
+        row('77103773', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 35407.17, quantity: 7115535.64, amount: 87866725.51 }),
+      ],
+      'acdi'
+    );
+    expect(r.inserted).toBe(1);
+    expect(r.repeatedInFile).toBe(1);
+    expect(r.conflicts).toHaveLength(0);
+    expect(r.history.commissions).toHaveLength(1);
+    expect(r.history.commissions[0]).toMatchObject({ op_number: '77103773', commission: 35407.17 });
+  });
+
+  it('FCI: si el boleto más alto viene primero, igual no se suma el otro', () => {
+    const r = load(
+      emptyHistory(),
+      'IEB',
+      [
+        row('77103773', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 35407.17 }),
+        row('74593157', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 105452.87 }),
+      ],
+      'acdi'
+    );
+    expect(r.history.commissions).toHaveLength(1);
+    expect(r.history.commissions[0]?.op_number).toBe('77103773');
+    expect(r.history.commissions[0]?.commission).toBe(35407.17);
+  });
+
+  it('FCI: un archivo posterior reemplaza la posición aunque cambien boleto, arancel y cantidad', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('74593157', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 105452.87, quantity: 100 })],
+      'acdi'
+    );
+    const second = load(
+      first.history,
+      'IEB',
+      [row('77103773', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 35407.17, quantity: 80 })],
+      'acdi'
+    );
+    expect(second.inserted).toBe(0);
+    expect(second.updated).toBe(1);
+    expect(second.conflicts).toHaveLength(0);
+    expect(second.history.commissions).toHaveLength(1);
+    expect(second.history.commissions[0]).toMatchObject({ op_number: '77103773', commission: 35407.17, quantity: 80 });
+  });
+
+  it('FCI: el archivo más nuevo manda, aunque el boleto sea el original', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('77103773', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 35407.17 })],
+      'acdi'
+    );
+    const second = load(
+      first.history,
+      'IEB',
+      [row('74593157', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 105452.87 })],
+      'acdi'
+    );
+    expect(second.history.commissions).toHaveLength(1);
+    expect(second.history.commissions[0]).toMatchObject({ op_number: '74593157', commission: 105452.87 });
+  });
+
+  it('FCI: "Clase B" y "Clase B ARS" son la misma posición', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('74598593', { instrument: 'Ciclo Nova Ahorro Plus Clase B', date: '2026-09-01', commission: 14301.05 })],
+      'acdi'
+    );
+    const second = load(
+      first.history,
+      'IEB',
+      [row('77114898', { instrument: 'Ciclo Nova Ahorro Plus Clase B ARS', date: '2026-09-01', commission: 3054.5 })],
+      'acdi'
+    );
+    expect(second.history.commissions).toHaveLength(1);
+    expect(second.history.commissions[0]?.op_number).toBe('77114898');
+  });
+
+  it('FCI: dos fondos el mismo día se conservan los dos', () => {
+    const r = load(
+      emptyHistory(),
+      'IEB',
+      [
+        row('10', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 10 }),
+        row('11', { instrument: 'Ciclo Nova Estrategico Clase A', date: '2026-09-01', commission: 4 }),
+      ],
+      'acdi'
+    );
+    expect(r.inserted).toBe(2);
+    expect(r.history.commissions).toHaveLength(2);
+  });
+
+  it('FCI ya guardado dos veces: al leer queda la copia que volvió en un archivo posterior', () => {
+    const first = load(
+      emptyHistory(),
+      'IEB',
+      [row('74586455', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 21.75, quantity: 1807.21 })],
+      'acdi'
+    );
+    const kept = first.history.commissions[0]!;
+    const oldImport = { ...first.history.imports[0]!, imported_at: '2026-10-12T00:00:00.000Z' };
+    const late = { ...oldImport, id: 'imp_late', imported_at: '2026-11-06T00:00:00.000Z', filename: 'ACDI sept.xlsx' };
+    const cleaned = coerceHistory({
+      ...first.history,
+      imports: [oldImport, late],
+      commissions: [
+        { ...kept, import_id: oldImport.id, also_in_imports: [late.id] },
+        { ...kept, id: 'reemitido', op_number: '77092501', commission: 8.76, import_id: oldImport.id, also_in_imports: [] },
+      ],
+    });
+    expect(cleaned.commissions).toHaveLength(1);
+    expect(cleaned.commissions[0]).toMatchObject({ op_number: '74586455', commission: 21.75 });
+  });
+
   it('dos boletos en la misma importación no se borran al leer', () => {
     const loaded = load(
       emptyHistory(),
