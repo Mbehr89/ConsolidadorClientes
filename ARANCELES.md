@@ -81,4 +81,6 @@ socio     = resultado × su % de beneficio
 
 El % de equity no reparte el resultado: queda al lado, como «si se repartiera por capital». Si los % de beneficio no suman 100, el resto queda sin asignar y se muestra. Un mes sin tipo de cambio no inventa el número unificado.
 
-Socios, sueldos, gastos y tipos de cambio se guardan en `settings.balances` del mismo historial de Drive. Guardar las alícuotas no los pisa. El cálculo está en `lib/balances/`.
+La pestaña Balance es el estado de resultados del período y de los grupos elegidos. Cada línea (aranceles, sueldos, cada tipo de gasto y el resultado) se puede abrir por socio: le corresponde su % de beneficio dentro de cada grupo, y el mismo nombre en dos grupos es una sola columna. Lo que no suma 100% queda en Sin asignar.
+
+Socios, sueldos, gastos y tipos de cambio se cargan en Movimientos y se guardan en `settings.balances` del mismo historial de Drive. Guardar las alícuotas no los pisa. El cálculo está en `lib/balances/`.
