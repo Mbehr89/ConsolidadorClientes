@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { summarizeBackup, type BackupSummary } from '@/lib/aranceles/backup';
-import { findDuplicateGroups, findSharedIdGroups } from '@/lib/aranceles/dedup';
+import { findAcdiReissueGroups, findDuplicateGroups, findSharedIdGroups } from '@/lib/aranceles/dedup';
 import { coerceHistory, emptyHistory } from '@/lib/aranceles/history';
 import type { ArancelesHistory } from '@/lib/aranceles/types';
 import {
@@ -249,6 +249,13 @@ function assertNoNewDuplicates(before: ArancelesHistory, after: ArancelesHistory
   if (shared.length > findSharedIdGroups(before.commissions).length) {
     throw new Error(
       `Un mismo n° de operación quedaría asignado a operaciones distintas (n° ${sample(shared)}). ` +
+        'No se guardó ningún cambio en el historial.'
+    );
+  }
+  const reissued = findAcdiReissueGroups(after.commissions);
+  if (reissued.length > findAcdiReissueGroups(before.commissions).length) {
+    throw new Error(
+      `Un FCI quedaría cargado dos veces con boletos de series distintas (n° ${sample(reissued)}). ` +
         'No se guardó ningún cambio en el historial.'
     );
   }

@@ -152,7 +152,7 @@ export function ImportWizard({ alycs, onImported }: { alycs: string[]; onImporte
             {success.empty
               ? 'El archivo estaba vacío.'
               : `Se guardaron ${success.rowCount} operaciones nuevas` +
-                (success.updated ? ` · ${success.updated} ACDI se actualizaron con año y mes` : '') +
+                (success.updated ? ` · ${success.updated} ya cargadas se actualizaron (boleto nuevo o datos de ACDI)` : '') +
                 (success.duplicates ? ` · ${success.duplicates} ya estaban en el historial (no se duplicaron)` : '') +
                 (success.repeatedInFile ? ` · ${success.repeatedInFile} líneas repetidas dentro del archivo` : '') +
                 (success.errorCount ? ` · ${success.errorCount} omitidas por datos inválidos` : '') +

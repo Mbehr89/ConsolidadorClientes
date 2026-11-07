@@ -6,10 +6,13 @@ import {
   recomputeAnomalies,
 } from '@/lib/aranceles/fees';
 import {
+  ACDI_REISSUE_GAP,
   acdiPositionKey,
   alycKey,
+  boletoNumber,
   contentFingerprint,
   contentKey,
+  isAcdiReissueGap,
   reissueKey,
   currentAlycName,
   currentCurrency,
@@ -79,10 +82,10 @@ export function coerceHistory(raw: unknown): ArancelesHistory {
  * - Títulos: misma cuenta, fecha, instrumento y arancel (el bruto de la orden puede cambiar), en dos
  *   importaciones. Queda la importación más nueva. Dos boletos dentro del mismo archivo se conservan:
  *   son dos operaciones.
- * - FCI: una posición por cuenta, día, fondo y moneda, aunque cambien el arancel, la cantidad y el
- *   nombre del fondo en el sufijo de la moneda, y aunque las dos copias vengan en el mismo archivo.
- *   Queda la copia que volvió a aparecer en el archivo más nuevo. Si las dos se vieron por última vez
- *   juntas, queda el boleto más alto (la reemisión).
+ * - FCI: una posición por cuenta, día, fondo y moneda cuando los boletos son de series distintas
+ *   (se distancian 100.000 o más). Pueden cambiar el arancel, la cantidad y el sufijo ARS/USD del fondo,
+ *   y las dos copias pueden venir en el mismo archivo. Queda la serie que volvió en el archivo más nuevo;
+ *   si se vieron juntas, la del boleto más alto. Dos boletos cercanos son dos suscripciones y se conservan.
  */
 export function collapseReissuedBoletos(
   commissions: readonly ArancelCommission[],
@@ -119,20 +122,33 @@ export function collapseReissuedBoletos(
     positions.set(key, list);
   }
   for (const list of positions.values()) {
-    const byOp = new Map<string, { op: string; at: string; ids: string[] }>();
+    const byOp = new Map<string, { op: string; at: string; ids: string[]; rank: number }>();
     for (const c of list) {
       const op = operationKey(c)!;
-      const e = byOp.get(op) ?? { op, at: '', ids: [] };
+      const e = byOp.get(op) ?? { op, at: '', ids: [], rank: boletoNumber(c.op_number) ?? 0 };
       const at = seenAt(c);
       if (at > e.at) e.at = at;
       e.ids.push(c.id);
       byOp.set(op, e);
     }
     if (byOp.size < 2) continue;
-    const ranked = [...byOp.values()].sort(
-      (a, b) => b.at.localeCompare(a.at) || b.op.localeCompare(a.op, undefined, { numeric: true })
-    );
-    for (const e of ranked.slice(1)) for (const id of e.ids) drop.add(id);
+    const ops = [...byOp.values()].sort((a, b) => a.rank - b.rank);
+    const series: (typeof ops)[] = [];
+    for (const op of ops) {
+      const current = series[series.length - 1];
+      const prev = current?.[current.length - 1];
+      if (current && prev && op.rank - prev.rank < ACDI_REISSUE_GAP) current.push(op);
+      else series.push([op]);
+    }
+    if (series.length < 2) continue;
+    const ranked = series
+      .map((s) => ({
+        at: s.reduce((max, e) => (e.at > max ? e.at : max), ''),
+        rank: s[s.length - 1]!.rank,
+        s,
+      }))
+      .sort((a, b) => b.at.localeCompare(a.at) || b.rank - a.rank);
+    for (const loser of ranked.slice(1)) for (const e of loser.s) for (const id of e.ids) drop.add(id);
   }
 
   return drop.size === 0 ? [...commissions] : commissions.filter((c) => !drop.has(c.id));
@@ -183,8 +199,8 @@ export type ApplyImportResult = {
   /** Operaciones ya cargadas a las que este archivo les completó datos de detalle. */
   enriched: number;
   /**
-   * Operaciones ACDI ya cargadas a las que este archivo les escribió la fecha (año y mes)
-   * y el resto de los datos. No se duplican ni quedan como conflicto.
+   * Operaciones ya cargadas que este archivo actualizó: la fecha de un ACDI, o el boleto
+   * nuevo de una operación reemitida. No se duplican.
    */
   updated: number;
 };
@@ -195,11 +211,11 @@ export type ApplyImportResult = {
  *   otra fuente de la operación;
  * - mismo número con datos distintos → conflicto: no se agrega ni se pisa, se informa.
  *   Excepción ACDI: esas planillas antes no traían fecha. El mismo ID se actualiza con el año y mes nuevos;
- * - otro número, pero misma cuenta, fecha, instrumento y arancel (aunque cambie el bruto) → conflicto: IEB a veces cambia el
- *   boleto entre un archivo y el siguiente. No se suma de nuevo y se informa el boleto que ya estaba;
- * - FCI con otro boleto para la misma cuenta, día, fondo y moneda → es la misma posición. El archivo nuevo
- *   la reemplaza (queda un solo boleto, el de este archivo). Si las dos copias vienen en este archivo, queda
- *   el boleto más alto;
+ * - otro número, pero misma cuenta, fecha, instrumento y arancel (aunque cambie el bruto) → es la misma operación
+ *   de títulos. Queda una fila: se le escribe el boleto y el bruto nuevos, para que un archivo posterior la encuentre;
+ * - FCI con otro boleto de otra serie (a 100.000 o más) para la misma cuenta, día, fondo y moneda → es la misma
+ *   posición. El archivo nuevo la reemplaza. Si las dos copias vienen en este archivo, queda el boleto más alto.
+ *   Dos boletos cercanos son dos suscripciones y se guardan las dos;
  * - línea repetida dentro del mismo archivo → se guarda una sola vez.
  * No recalcula tarifas: llamar a `runFeeAnalysis` después.
  */
@@ -224,16 +240,26 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     if (pos) byPosition.set(pos, c);
   }
 
-  const boletoRank = (op: string | null | undefined) => {
-    const n = normalizeOpNumber(op);
-    const x = n != null && /^\d+$/.test(n) ? Number(n) : NaN;
-    return Number.isFinite(x) ? x : 0;
+  const boletoRank = (op: string | null | undefined) => boletoNumber(op) ?? 0;
+
+  const reindexOp = (prev: ArancelCommission, oldOp: string | null) => {
+    if (oldOp) byOperation.set(oldOp, (byOperation.get(oldOp) ?? []).filter((x) => x.id !== prev.id));
+    const newOp = operationKey(prev);
+    if (newOp) byOperation.set(newOp, [...(byOperation.get(newOp) ?? []), prev]);
+  };
+
+  const reindexFingerprint = (prev: ArancelCommission, oldFp: string) => {
+    const newFp = reissueKey(prev);
+    if (oldFp === newFp) return;
+    byFingerprint.set(oldFp, (byFingerprint.get(oldFp) ?? []).filter((x) => x.id !== prev.id));
+    byFingerprint.set(newFp, [...(byFingerprint.get(newFp) ?? []), prev]);
   };
 
   /** El archivo que llega pisa la posición de FCI. No se abre una segunda fila. */
   const replacePosition = (prev: ArancelCommission, incoming: ArancelCommission) => {
     const oldOp = operationKey(prev);
     const oldPos = acdiPositionKey(prev);
+    const oldFp = reissueKey(prev);
     prev.op_number = incoming.op_number;
     prev.client = incoming.client;
     prev.client_key = incoming.client_key;
@@ -253,9 +279,8 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     prev.fee_status = incoming.fee_status;
     prev.is_min_fee = incoming.is_min_fee;
     if (incoming.details) prev.details = { ...prev.details, ...incoming.details };
-    if (oldOp) byOperation.set(oldOp, (byOperation.get(oldOp) ?? []).filter((x) => x.id !== prev.id));
-    const newOp = operationKey(prev);
-    if (newOp) byOperation.set(newOp, [...(byOperation.get(newOp) ?? []), prev]);
+    reindexOp(prev, oldOp);
+    reindexFingerprint(prev, oldFp);
     if (oldPos && oldPos !== acdiPositionKey(prev) && byPosition.get(oldPos)?.id === prev.id) byPosition.delete(oldPos);
     const newPos = acdiPositionKey(prev);
     if (newPos) byPosition.set(newPos, prev);
@@ -388,25 +413,9 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
       });
       return;
     }
-    const twin =
-      alycKey(c.alyc) === 'ieb'
-        ? (byFingerprint.get(reissueKey(c)) ?? []).find((e) => operationKey(e) !== op)
-        : undefined;
-    if (twin) {
-      conflicts.push({
-        op_number: c.op_number ?? '',
-        client: c.client,
-        trade_date: c.trade_date,
-        differences: [`ya cargada con el boleto ${twin.op_number}`],
-        existing_commission: twin.commission,
-        incoming_commission: c.commission,
-        existing_import_id: twin.import_id,
-      });
-      return;
-    }
     const pos = acdiPositionKey(c);
     const positioned = pos ? byPosition.get(pos) : undefined;
-    if (positioned && operationKey(positioned) !== op) {
+    if (positioned && operationKey(positioned) !== op && isAcdiReissueGap(positioned.op_number, c.op_number)) {
       const inThisFile = positioned.import_id === importId;
       if (!inThisFile || boletoRank(c.op_number) > boletoRank(positioned.op_number)) replacePosition(positioned, c);
       if (inThisFile) repeatedInFile += 1;
@@ -414,6 +423,21 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
         alsoIn.add(positioned.id);
         updatedRows += 1;
       }
+      return;
+    }
+    const twin =
+      !pos && alycKey(c.alyc) === 'ieb'
+        ? (byFingerprint.get(reissueKey(c)) ?? []).find((e) => operationKey(e) !== op)
+        : undefined;
+    if (twin) {
+      const oldOp = operationKey(twin);
+      const oldFp = reissueKey(twin);
+      twin.op_number = c.op_number;
+      twin.amount = c.amount;
+      reindexOp(twin, oldOp);
+      reindexFingerprint(twin, oldFp);
+      alsoIn.add(twin.id);
+      updatedRows += 1;
       return;
     }
     insertedOps.add(op);

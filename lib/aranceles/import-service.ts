@@ -443,7 +443,7 @@ export async function syncDriveAranceles(opts: { limit?: number; force?: boolean
         if (applied.importRecord) newImportIds.push(applied.importRecord.id);
         const warnings: string[] = [];
         if (item.prepared.errors.length) warnings.push(`${item.prepared.errors.length} filas omitidas por datos inválidos`);
-        if (applied.updated) warnings.push(`${applied.updated} operaciones ACDI se actualizaron con el año y mes del archivo`);
+        if (applied.updated) warnings.push(`${applied.updated} operaciones ya cargadas se actualizaron (boleto nuevo o datos de ACDI)`);
         if (applied.duplicates) warnings.push(`${applied.duplicates} operaciones ya estaban en el historial`);
         if (applied.enriched) warnings.push(`a ${applied.enriched} de ellas se les completó el productor / detalle`);
         if (applied.repeatedInFile) warnings.push(`${applied.repeatedInFile} líneas repetidas dentro del archivo`);

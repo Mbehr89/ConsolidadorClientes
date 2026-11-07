@@ -156,6 +156,47 @@ export function acdiPositionKey(c: Identifiable & { commission_currency?: string
   return `${client}|${c.trade_date}|${fund}|${text(c.commission_currency || c.currency)}`;
 }
 
+/**
+ * IEB reemite un FCI en otra serie de boletos (salta cientos de miles).
+ * Dos suscripciones del mismo día quedan a pocos números de distancia y no son la misma posición.
+ */
+export const ACDI_REISSUE_GAP = 100_000;
+
+export function boletoNumber(op: string | null | undefined): number | null {
+  const n = normalizeOpNumber(op);
+  if (n == null || !/^\d+$/.test(n)) return null;
+  const x = Number(n);
+  return Number.isFinite(x) ? x : null;
+}
+
+export function isAcdiReissueGap(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = boletoNumber(a);
+  const y = boletoNumber(b);
+  return x != null && y != null && Math.abs(x - y) >= ACDI_REISSUE_GAP;
+}
+
+/**
+ * Posiciones de FCI guardadas más de una vez con boletos de series distintas.
+ * Tiene que dar vacío después de `collapseReissuedBoletos`.
+ */
+export function findAcdiReissueGroups(commissions: readonly ArancelCommission[]): DuplicateGroup[] {
+  const groups = new Map<string, ArancelCommission[]>();
+  for (const c of commissions) {
+    const key = acdiPositionKey(c);
+    if (!key || !operationKey(c)) continue;
+    const list = groups.get(key) ?? [];
+    list.push(c);
+    groups.set(key, list);
+  }
+  const out: DuplicateGroup[] = [];
+  for (const [key, list] of groups) {
+    const ranks = [...new Set(list.map((c) => boletoNumber(c.op_number) ?? 0))].sort((a, b) => a - b);
+    if (ranks.length < 2 || ranks[ranks.length - 1]! - ranks[0]! < ACDI_REISSUE_GAP) continue;
+    out.push({ key, op_number: list[0]?.op_number ?? null, ids: list.map((c) => c.id) });
+  }
+  return out;
+}
+
 export type DedupConflict = {
   op_number: string;
   client: string;

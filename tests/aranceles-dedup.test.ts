@@ -119,7 +119,7 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     expect(again.conflicts).toHaveLength(0);
   });
 
-  it('la misma operación con otro boleto no se suma y queda como conflicto', () => {
+  it('la misma operación con otro boleto no se suma: queda el boleto nuevo', () => {
     const first = load(
       emptyHistory(),
       'IEB',
@@ -136,10 +136,9 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
       'aranceles_privado'
     );
     expect(second.inserted).toBe(1);
-    expect(second.conflicts).toHaveLength(1);
-    expect(second.conflicts[0]?.op_number).toBe('105610553');
-    expect(second.conflicts[0]?.differences).toEqual(['ya cargada con el boleto 97978301']);
-    expect(second.history.commissions.map((c) => c.op_number).sort()).toEqual(['105700000', '97978301']);
+    expect(second.updated).toBe(1);
+    expect(second.conflicts).toHaveLength(0);
+    expect(second.history.commissions.map((c) => c.op_number).sort()).toEqual(['105610553', '105700000']);
   });
 
   it('al leer el historial deja una sola copia si el boleto cambió entre archivos', () => {
@@ -174,9 +173,20 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
       'aranceles_privado'
     );
     expect(second.inserted).toBe(0);
-    expect(second.conflicts).toHaveLength(1);
-    expect(second.conflicts[0]?.differences).toEqual(['ya cargada con el boleto 98015868']);
+    expect(second.updated).toBe(1);
+    expect(second.conflicts).toHaveLength(0);
     expect(second.history.commissions).toHaveLength(1);
+    expect(second.history.commissions[0]).toMatchObject({ op_number: '105659661', amount: 332823.84, commission: 206.98 });
+    const third = load(
+      second.history,
+      'IEB',
+      [row('105659661', { instrument: 'YMCXO', date: '2026-10-05', clientExternalId: '352723', amount: 332823.84, commission: 210, quantity: null, currency: 'USD' })],
+      'aranceles_privado'
+    );
+    expect(third.inserted).toBe(0);
+    expect(third.conflicts).toHaveLength(1);
+    expect(third.history.commissions).toHaveLength(1);
+    expect(third.history.commissions[0]?.commission).toBe(206.98);
   });
 
   it('FCI: dos boletos de la misma posición en un archivo quedan en el más alto', () => {
@@ -263,6 +273,22 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     );
     expect(second.history.commissions).toHaveLength(1);
     expect(second.history.commissions[0]?.op_number).toBe('77114898');
+  });
+
+  it('FCI: dos suscripciones con boletos cercanos se conservan las dos', () => {
+    const r = load(
+      emptyHistory(),
+      'IEB',
+      [
+        row('74590001', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 100, quantity: 10 }),
+        row('74590080', { instrument: 'Ciclo Nova Ahorro Clase A', date: '2026-09-01', commission: 40, quantity: 4 }),
+      ],
+      'acdi'
+    );
+    expect(r.inserted).toBe(2);
+    expect(r.history.commissions).toHaveLength(2);
+    const again = coerceHistory(r.history);
+    expect(again.commissions).toHaveLength(2);
   });
 
   it('FCI: dos fondos el mismo día se conservan los dos', () => {
