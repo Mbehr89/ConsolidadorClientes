@@ -1,6 +1,6 @@
 ﻿import { describe, expect, it } from 'vitest';
 import { alycKey, findDuplicateGroups, findSharedIdGroups, normalizeOpNumber, operationKey } from '@/lib/aranceles/dedup';
-import { applyImport, coerceHistory, collapseReissuedBoletos, emptyHistory, removeImports } from '@/lib/aranceles/history';
+import { applyImport, coerceHistory, collapseReissuedBoletos, emptyHistory, inheritMissingProducers, removeImports } from '@/lib/aranceles/history';
 import type { ArancelesHistory, NormalizedRow } from '@/lib/aranceles/types';
 
 function row(op: string | null, over: Partial<NormalizedRow> = {}): NormalizedRow {
@@ -430,6 +430,53 @@ describe('aranceles: identificación de operaciones y duplicados', () => {
     const b = load(a.history, 'OTRA', [row(null), row(null), row(null)]);
     expect(b.inserted).toBe(1);
     expect(b.duplicates).toBe(2);
+  });
+
+  it('una fila en dólares sin productor hereda el de la misma cuenta', () => {
+    const mili = { productor: 'Milagros Behr', productor_numero: '251' };
+    const claudio = { productor: 'Claudio Behr', productor_numero: '252' };
+    const base = {
+      id: 'a',
+      import_id: 'i',
+      alyc: 'IEB',
+      client: 'IZZO',
+      client_key: 'izzo',
+      client_external_id: '341548',
+      account_officer: 'Sin asignar',
+      trade_date: '2026-09-01',
+      settlement_date: null,
+      instrument: 'YFCJO',
+      operation: 'PRIVADO',
+      quantity: null,
+      amount: 1,
+      commission: 22,
+      commission_pct: null,
+      currency: 'USD',
+      commission_currency: 'USD',
+      commission_fx: null,
+      imported_status: 'ok' as const,
+      fee_status: 'ok' as const,
+      expected_commission: null,
+      op_number: '1',
+      segment: 'aranceles_privado',
+      is_min_fee: false,
+      trading_group: null,
+      also_in_imports: [],
+    };
+    const rows = inheritMissingProducers([
+      base,
+      { ...base, id: 'b', trade_date: '2026-08-31', currency: 'USD', details: mili, op_number: '2' },
+      { ...base, id: 'c', client_external_id: '352078', trade_date: '2026-09-10', currency: 'ARS', details: mili, op_number: '3' },
+      { ...base, id: 'd', client_external_id: '352078', trade_date: '2026-09-04', currency: 'USD', details: undefined, op_number: '4' },
+      { ...base, id: 'e', client_external_id: '352078', trade_date: '2026-06-12', currency: 'USD', details: claudio, op_number: '5' },
+      { ...base, id: 'f', client_external_id: '999', trade_date: '2026-09-01', details: undefined, op_number: '6' },
+      { ...base, id: 'g', client_external_id: '999', trade_date: '2026-09-02', details: mili, op_number: '7' },
+      { ...base, id: 'h', client_external_id: '999', trade_date: '2026-09-02', details: claudio, op_number: '8' },
+    ]);
+    expect(rows.find((c) => c.id === 'a')?.details).toMatchObject(mili);
+    expect(rows.find((c) => c.id === 'd')?.details).toMatchObject(mili);
+    expect(rows.find((c) => c.id === 'e')?.details).toMatchObject(claudio);
+    expect(rows.find((c) => c.id === 'f')?.details?.productor_numero).toBeUndefined();
   });
 
   it('detecta duplicados si el historial llega a tenerlos', () => {

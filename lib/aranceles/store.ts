@@ -78,13 +78,21 @@ const g = globalThis as typeof globalThis & {
   __arancelesWriteChain?: Promise<unknown>;
 };
 
+function producerNumber(c: { details?: { productor_numero?: string } }): string {
+  return c.details?.productor_numero?.trim() ?? '';
+}
+
 function parseHistoryText(text: string): { history: ArancelesHistory; collapsed: number } {
   if (!text.trim()) return { history: emptyHistory(), collapsed: 0 };
   try {
-    const parsed = JSON.parse(text) as { commissions?: unknown };
-    const before = Array.isArray(parsed.commissions) ? parsed.commissions.length : 0;
+    const parsed = JSON.parse(text) as { commissions?: { details?: { productor_numero?: string } }[] };
+    const rawRows = Array.isArray(parsed.commissions) ? parsed.commissions : [];
+    const before = rawRows.length;
+    const missingBefore = rawRows.filter((c) => !producerNumber(c)).length;
     const history = coerceHistory(parsed);
-    return { history, collapsed: Math.max(0, before - history.commissions.length) };
+    const missingAfter = history.commissions.filter((c) => !producerNumber(c)).length;
+    const repaired = Math.max(0, missingBefore - missingAfter);
+    return { history, collapsed: Math.max(0, before - history.commissions.length) + repaired };
   } catch (err) {
     if (err instanceof Error && err.message.startsWith('El historial')) throw err;
     throw new Error('El historial de aranceles no es un JSON válido. Revisalo en Drive antes de seguir.');

@@ -53,7 +53,7 @@ export function coerceHistory(raw: unknown): ArancelesHistory {
     updated_at: typeof r.updated_at === 'string' ? r.updated_at : new Date().toISOString(),
     imports: Array.isArray(r.imports) ? r.imports.map((i) => ({ ...i, alyc: currentAlycName(i.alyc) })) : [],
     commissions: Array.isArray(r.commissions)
-      ? collapseReissuedBoletos(
+      ? inheritMissingProducers(collapseReissuedBoletos(
           r.commissions.map((c) => ({
             ...c,
             alyc: currentAlycName(c.alyc),
@@ -64,7 +64,7 @@ export function coerceHistory(raw: unknown): ArancelesHistory {
             also_in_imports: Array.isArray(c.also_in_imports) ? c.also_in_imports : [],
           })),
           Array.isArray(r.imports) ? r.imports : []
-        )
+        ))
       : [],
     fee_schedules: Array.isArray(r.fee_schedules)
       ? r.fee_schedules.map((s) => ({ ...s, alyc: currentAlycName(s.alyc), currency: currentCurrency(s.currency) }))
@@ -152,6 +152,52 @@ export function collapseReissuedBoletos(
   }
 
   return drop.size === 0 ? [...commissions] : commissions.filter((c) => !drop.has(c.id));
+}
+
+/**
+ * El Excel de IEB a veces deja vacío el productor en las filas en dólares.
+ * Si la cuenta, en ese mes, tiene un solo productor en las otras filas, se lo copiamos.
+ * Si en el mes no hay ninguna, se usa el productor cuando la cuenta tuvo uno solo en todo el historial.
+ * Si tuvo más de uno, la fila sigue sin productor.
+ */
+export function inheritMissingProducers(commissions: readonly ArancelCommission[]): ArancelCommission[] {
+  const byAccountMonth = new Map<string, Set<string>>();
+  const byAccount = new Map<string, Set<string>>();
+  const nameOf = new Map<string, string>();
+  for (const c of commissions) {
+    const numero = c.details?.productor_numero?.trim();
+    const account = c.client_external_id?.trim();
+    if (!numero || !account || !c.trade_date) continue;
+    const accountKey = `${alycKey(c.alyc)}|${account}`;
+    const monthKey = `${accountKey}|${c.trade_date.slice(0, 7)}`;
+    const inMonth = byAccountMonth.get(monthKey) ?? new Set<string>();
+    inMonth.add(numero);
+    byAccountMonth.set(monthKey, inMonth);
+    const ever = byAccount.get(accountKey) ?? new Set<string>();
+    ever.add(numero);
+    byAccount.set(accountKey, ever);
+    const name = c.details?.productor?.trim();
+    if (name && !nameOf.has(numero)) nameOf.set(numero, name);
+  }
+  let changed = false;
+  const next = commissions.map((c) => {
+    if (c.details?.productor_numero?.trim() || !c.client_external_id?.trim() || !c.trade_date) return c;
+    const accountKey = `${alycKey(c.alyc)}|${c.client_external_id.trim()}`;
+    const inMonth = byAccountMonth.get(`${accountKey}|${c.trade_date.slice(0, 7)}`);
+    const ever = byAccount.get(accountKey);
+    const numero = inMonth?.size === 1 ? [...inMonth][0]! : ever?.size === 1 ? [...ever][0]! : null;
+    if (!numero) return c;
+    changed = true;
+    return {
+      ...c,
+      details: {
+        ...c.details,
+        productor_numero: numero,
+        productor: c.details?.productor?.trim() || nameOf.get(numero) || c.details?.productor || '',
+      },
+    };
+  });
+  return changed ? next : [...commissions];
 }
 
 export function clientKey(name: string): string {
@@ -482,7 +528,9 @@ export function applyImport(history: ArancelesHistory, input: ApplyImportInput):
     history: {
       ...history,
       imports: [...history.imports, importRecord],
-      commissions: collapseReissuedBoletos([...updated, ...commissions], [...history.imports, importRecord]),
+      commissions: inheritMissingProducers(
+        collapseReissuedBoletos([...updated, ...commissions], [...history.imports, importRecord])
+      ),
     },
     importRecord,
     inserted: commissions.length,

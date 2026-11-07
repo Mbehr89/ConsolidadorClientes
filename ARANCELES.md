@@ -49,6 +49,7 @@ Con boleto o ID, la clave es ALYC + familia de planilla + número. Público y pr
 - Dos boletos de títulos dentro del mismo archivo se conservan: son dos operaciones.
 - FCI IEB es una posición por cuenta, día, fondo y moneda cuando los boletos son de series distintas: se distancian 100.000 o más. Al reemitir, IEB cambia el boleto, el arancel y la cantidad, y a veces le agrega «ARS» o «USD» al nombre del fondo. No se suman las dos copias, aunque vengan en el mismo archivo. Queda la serie que volvió en el archivo más nuevo. Si se vieron juntas, queda el boleto más alto. Dos boletos cercanos son dos suscripciones y se conservan. Un archivo posterior pisa la posición reemitida: no abre una fila nueva.
 - Antes de guardar, si apareciera un FCI dos veces en series distintas, la escritura se aborta.
+- Si una fila de IEB viene sin productor, hereda el de esa cuenta en el mismo mes. Si en el mes no hay, el de la cuenta cuando en todo el historial tuvo un solo productor. Las filas en dólares de septiembre de Izzo, Vázquez, López Davio y Scalambrino quedan en Mili por esta regla.
 
 ACDI es la excepción del mismo ID: si el ID ya existe, se actualiza la fecha y el resto de los datos. No es conflicto. La fecha sale de las columnas Año y Mes (se guarda como día 1 de ese mes). Sin esas columnas se usa la fecha de respaldo del archivo.
 
