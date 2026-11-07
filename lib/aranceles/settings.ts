@@ -1,3 +1,4 @@
+import { coerceBalances, emptyBalances, type BalancesConfig } from '@/lib/balances/config';
 import type { ArancelCommission } from '@/lib/aranceles/types';
 
 /** Tipos de arancel que se liquidan (columnas de la planilla "calculadora aranceles IEB"). */
@@ -135,6 +136,8 @@ export type ArancelesSettings = {
   manager_shares: ManagerShares[];
   account_transfers: AccountTransfer[];
   person_aliases: PersonAlias[];
+  /** Socios, sueldos, gastos y tipo de cambio del balance por grupo. */
+  balances: BalancesConfig;
 };
 
 /** Los nombres cortos que ya usa GMA. */
@@ -179,6 +182,7 @@ export function defaultSettings(): ArancelesSettings {
     manager_shares: [],
     account_transfers: [],
     person_aliases: DEFAULT_PERSON_ALIASES,
+    balances: emptyBalances(),
   };
 }
 
@@ -218,6 +222,7 @@ export function coerceSettings(raw: unknown): ArancelesSettings {
     person_aliases: Array.isArray(r.person_aliases)
       ? arr<PersonAlias>(r.person_aliases).map((a) => ({ alias: a.alias, nombres: arr<string>(a.nombres) }))
       : DEFAULT_PERSON_ALIASES,
+    balances: coerceBalances(r.balances),
   };
 }
 

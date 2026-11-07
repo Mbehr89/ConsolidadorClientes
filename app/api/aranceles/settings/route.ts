@@ -121,7 +121,11 @@ export async function PUT(req: Request) {
   }
   try {
     const history = await mutateHistory((h) => {
-      const next = { ...h, settings: coerceSettings(parsed.data as ArancelesSettings) };
+      const prev = coerceSettings(h.settings);
+      const settings = coerceSettings(parsed.data as ArancelesSettings);
+      // La pantalla de alícuotas no manda el balance: se conserva el que ya está guardado.
+      settings.balances = prev.balances;
+      const next = { ...h, settings };
       return { history: next, result: next };
     });
     return NextResponse.json(payload(history));

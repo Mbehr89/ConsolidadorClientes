@@ -68,3 +68,17 @@ Un archivo de Drive que no cambió no se vuelve a leer. Si cambió, se sacan las
 | Pantallas | `app/(app)/aranceles/` |
 
 Para contrastar un número con la planilla, usá `buildNetReport` sobre el historial. No sumes filas a mano sin pasar por el neto: el bruto de la orden no es el arancel, y el dólar cable es `USD_EXT`.
+
+## Balances
+
+La sección Balances parte del a pagar de Aranceles, agrupado por grupo asesor y mes. El dólar billete y el dólar cable se valúan con el tipo de cambio en pesos que se carga para ese mes. Con eso el flujo se ve entero en pesos o entero en dólares.
+
+```
+ingresos  = a pagar en $ + a pagar en U$D × tipo de cambio
+resultado = ingresos − sueldos − otros gastos
+socio     = resultado × su % de beneficio
+```
+
+El % de equity no reparte el resultado: queda al lado, como «si se repartiera por capital». Si los % de beneficio no suman 100, el resto queda sin asignar y se muestra. Un mes sin tipo de cambio no inventa el número unificado.
+
+Socios, sueldos, gastos y tipos de cambio se guardan en `settings.balances` del mismo historial de Drive. Guardar las alícuotas no los pisa. El cálculo está en `lib/balances/`.

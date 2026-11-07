@@ -18,6 +18,7 @@ import {
   LogOut,
   Menu,
   Receipt,
+  Scale,
   Settings2,
   Upload,
   UserCog,
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { href: '/bonos', label: 'Bonos', icon: Landmark },
   { href: '/inconsistencias', label: 'Inconsistencias', icon: AlertTriangle },
   { href: '/aranceles/neto', label: 'Aranceles', icon: Receipt },
+  { href: '/balances', label: 'Balances', icon: Scale },
 ] as const;
 
 const ADMIN_ITEMS = [
@@ -175,8 +177,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         <nav className="flex flex-1 flex-col gap-0.5 overflow-auto">
           {NAV_ITEMS.map((item) => {
-            const active =
-              item.href.startsWith('/aranceles') ? pathname.startsWith('/aranceles') : pathname === item.href;
+            const active = item.href.startsWith('/aranceles')
+              ? pathname.startsWith('/aranceles')
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link key={item.href} href={item.href} className={navLinkClass(active)}>
                 <item.icon className={cn('h-4 w-4 shrink-0', active ? 'opacity-100' : 'opacity-70')} aria-hidden />
