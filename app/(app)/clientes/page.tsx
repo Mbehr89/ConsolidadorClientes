@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { brokerColorClass, formatCompact, formatCurrency, titularTipoClass } from '@/lib/utils';
 import { buildClienteSummaries } from '@/lib/views/cliente-summary';
 import { buildGrupoListRows } from '@/lib/views/grupo-view';
-import { GRUPOS_ASESOR, SIN_GRUPO_ASESOR, clienteMatchesGrupoAsesor } from '@/lib/grupo-asesor';
+import { SIN_GRUPO_ASESOR, clienteMatchesGrupoAsesor } from '@/lib/grupo-asesor';
 import { ExportExcelButton } from '@/components/export-excel-button';
 import { ExportPdfButton } from '@/components/export-pdf-button';
 
@@ -266,7 +266,7 @@ export default function ClientesPage() {
           className="h-9 rounded-md border bg-background px-3 text-sm"
         >
           <option value="all">Todos los grupos asesor</option>
-          {GRUPOS_ASESOR.map((g) => (
+          {state.gruposAsesor.map((g) => (
             <option key={g} value={g}>
               {g}
             </option>

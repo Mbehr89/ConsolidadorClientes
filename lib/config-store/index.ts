@@ -21,6 +21,7 @@ export const STORE_KEYS = {
   TICKERS_PENDIENTES: 'config:tickers-pendientes',
   CLIENTE_ADVISORS: 'config:cliente-advisors',
   MAPPING_CUENTAS: 'config:mapping-cuentas',
+  GRUPOS_ASESOR: 'config:grupos-asesor',
   TIPO_CUENTA_MS: 'config:tipo-cuenta-ms',
   FX_DEFAULTS: 'config:fx-defaults',
   DRIVE_IMPORTED: 'config:drive-imported',

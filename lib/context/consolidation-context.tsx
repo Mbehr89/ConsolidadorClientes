@@ -15,7 +15,7 @@ import type {
   GruposStore,
 } from '@/lib/config-store/types';
 import { applyGrupoIdsToPositions } from '@/lib/analysis/grupos';
-import { buildGrupoAsesorByCuenta } from '@/lib/grupo-asesor';
+import { GRUPOS_ASESOR, buildGrupoAsesorByCuenta } from '@/lib/grupo-asesor';
 import { feedGlossary } from '@/lib/analysis/feed-glossary';
 import { mapTickersMetadataForParser } from '@/lib/analysis/ticker-meta-parser';
 import { aliasStoreToRecord } from '@/lib/analysis/alias-utils';
@@ -46,6 +46,8 @@ export interface ConsolidationState {
   advisorsByCliente: Record<string, string>;
   /** Grupo asesor por `${broker}::${cuenta}` (Mapping cuentas). */
   grupoAsesorByCuenta: Record<string, string>;
+  /** Catálogo de grupos asesores (Mapping cuentas). */
+  gruposAsesor: string[];
   fxManual: number | null;
   /** FX ARS/USD sugerido automáticamente a partir de los archivos cargados. */
   fxSuggested: number | null;
@@ -77,6 +79,7 @@ const INITIAL_STATE: ConsolidationState = {
   grupos: [],
   advisorsByCliente: {},
   grupoAsesorByCuenta: {},
+  gruposAsesor: [...GRUPOS_ASESOR],
   fxManual: null,
   fxSuggested: null,
   fechaIeb: null,
@@ -316,16 +319,22 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
     let aliasesStore: AliasStore = [];
     let gruposStore: GruposStore = [];
     let clienteAdvisorsStore: Record<string, string> = {};
+    let gruposAsesorCatalog: string[] = [...GRUPOS_ASESOR];
     try {
-      const [mRes, mmRes, pRes, aRes, gRes, caRes] = await Promise.all([
+      const [mRes, mmRes, pRes, aRes, gRes, caRes, gaRes] = await Promise.all([
         fetch('/api/config/mapping-cuentas'),
         fetch('/api/config/tickers-metadata'),
         fetch('/api/config/tickers-pendientes'),
         fetch('/api/config/aliases'),
         fetch('/api/config/grupos'),
         fetch('/api/config/cliente-advisors'),
+        fetch('/api/config/grupos-asesor'),
       ]);
       if (mRes.ok) mappingStore = (await mRes.json()) as MappingCuentasStore;
+      if (gaRes.ok) {
+        const loaded = (await gaRes.json()) as string[];
+        if (Array.isArray(loaded) && loaded.length) gruposAsesorCatalog = loaded;
+      }
       if (mmRes.ok) tickersMeta = (await mmRes.json()) as TickersMetadataStore;
       if (pRes.ok) tickersPend = (await pRes.json()) as TickersPendientesStore;
       if (aRes.ok) aliasesStore = (await aRes.json()) as AliasStore;
@@ -396,7 +405,8 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
       allPositions,
       grupos: gruposStore,
       advisorsByCliente,
-      grupoAsesorByCuenta: buildGrupoAsesorByCuenta(mappingStore),
+      grupoAsesorByCuenta: buildGrupoAsesorByCuenta(mappingStore, gruposAsesorCatalog),
+      gruposAsesor: gruposAsesorCatalog,
       hasParsed: allPositions.length > 0,
       isProcessing: false,
       aliasSuggestionsCount,
@@ -460,14 +470,26 @@ export function ConsolidationProvider({ children }: { children: ReactNode }) {
 
   const refreshGrupoAsesor = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/mapping-cuentas');
-      if (!res.ok) return;
-      const store = (await res.json()) as MappingCuentasStore;
-      setState((prev) => ({ ...prev, grupoAsesorByCuenta: buildGrupoAsesorByCuenta(store) }));
+      const [mRes, gRes] = await Promise.all([
+        fetch('/api/config/mapping-cuentas'),
+        fetch('/api/config/grupos-asesor'),
+      ]);
+      const store = mRes.ok ? ((await mRes.json()) as MappingCuentasStore) : null;
+      const loaded = gRes.ok ? ((await gRes.json()) as string[]) : null;
+      const gruposAsesor = Array.isArray(loaded) && loaded.length ? loaded : [...GRUPOS_ASESOR];
+      setState((prev) => ({
+        ...prev,
+        gruposAsesor,
+        grupoAsesorByCuenta: store ? buildGrupoAsesorByCuenta(store, gruposAsesor) : prev.grupoAsesorByCuenta,
+      }));
     } catch {
       /* noop */
     }
   }, []);
+
+  useEffect(() => {
+    void refreshGrupoAsesor();
+  }, [refreshGrupoAsesor]);
 
   const reset = useCallback(() => {
     setState(INITIAL_STATE);

@@ -9,7 +9,7 @@ import {
 } from '@/lib/aranceles/settings';
 import type { ArancelCommission } from '@/lib/aranceles/types';
 import type { MappingCuentasStore } from '@/lib/config-store/types';
-import { normalizeGrupoAsesor } from '@/lib/grupo-asesor';
+import { GRUPOS_ASESOR, normalizeGrupoAsesor } from '@/lib/grupo-asesor';
 import type { BrokerCode } from '@/lib/schema';
 
 /**
@@ -97,7 +97,8 @@ function personaFromFile(c: ArancelCommission, officer: string | null, settings:
 export function segmentCommissions(
   commissions: readonly ArancelCommission[],
   store: MappingCuentasStore | null,
-  settings: ArancelesSettings = defaultSettings()
+  settings: ArancelesSettings = defaultSettings(),
+  gruposAsesor: readonly string[] = GRUPOS_ASESOR
 ): SegmentedCommission[] {
   return commissions.map((c) => {
     const broker = mappingBrokerForAlyc(c.alyc);
@@ -114,7 +115,7 @@ export function segmentCommissions(
       tipo: feeTypeLabel(c),
       manager: personaFromFile(c, officer, settings) ?? personAlias(clean(obj?.productor), settings),
       advisor: personAlias(clean(obj?.advisor), settings),
-      grupo_asesor: normalizeGrupoAsesor(obj?.grupo_asesor),
+      grupo_asesor: normalizeGrupoAsesor(obj?.grupo_asesor, gruposAsesor),
     };
   });
 }

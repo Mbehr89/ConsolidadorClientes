@@ -3,7 +3,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useConsolidation } from '@/lib/context/consolidation-context';
 import {
-  GRUPOS_ASESOR,
   SIN_GRUPO_ASESOR,
   grupoAsesorDePosicion,
   matchesGrupoAsesor,
@@ -465,7 +464,7 @@ export default function ActivosPage() {
           className="h-9 rounded-md border bg-background px-3 text-sm"
         >
           <option value="all">Todos los grupos asesor</option>
-          {GRUPOS_ASESOR.map((g) => (
+          {state.gruposAsesor.map((g) => (
             <option key={g} value={g}>
               {g}
             </option>

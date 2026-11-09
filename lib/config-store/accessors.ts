@@ -2,6 +2,7 @@
  * Typed accessors for each config store.
  * Import these instead of using getStore/setStore directly.
  */
+import { GRUPOS_ASESOR, mergeGruposAsesor } from '@/lib/grupo-asesor';
 import { getStore, setStore, STORE_KEYS } from './index';
 import {
   AliasStoreSchema,
@@ -10,6 +11,7 @@ import {
   TickersPendientesStoreSchema,
   ClienteAdvisorStoreSchema,
   MappingCuentasStoreSchema,
+  GruposAsesorStoreSchema,
   TipoCuentaMsStoreSchema,
   FxDefaultsStoreSchema,
   DriveImportedStoreSchema,
@@ -19,6 +21,7 @@ import {
   type TickersPendientesStore,
   type ClienteAdvisorStore,
   type MappingCuentasStore,
+  type GruposAsesorStore,
   type TipoCuentaMsStore,
   type FxDefaultsStore,
   type DriveImportedStore,
@@ -87,6 +90,15 @@ export async function getMappingCuentas(): Promise<MappingCuentasStore> {
 
 export async function setMappingCuentas(value: MappingCuentasStore): Promise<void> {
   return setStore(STORE_KEYS.MAPPING_CUENTAS, MappingCuentasStoreSchema, value);
+}
+
+export async function getGruposAsesor(): Promise<GruposAsesorStore> {
+  return getStore(STORE_KEYS.GRUPOS_ASESOR, GruposAsesorStoreSchema, [...GRUPOS_ASESOR]);
+}
+
+export async function setGruposAsesor(value: readonly string[]): Promise<void> {
+  const grupos = mergeGruposAsesor([], value).grupos;
+  return setStore(STORE_KEYS.GRUPOS_ASESOR, GruposAsesorStoreSchema, grupos);
 }
 
 // ─── Tipo cuenta MS ─────────────────────────────────────

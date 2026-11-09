@@ -5,6 +5,7 @@ import { mutateHistory } from '@/lib/aranceles/store';
 import { coerceBalances, type BalancesConfig } from '@/lib/balances/config';
 import { collectIncome } from '@/lib/balances/income';
 import { GRUPOS_ASESOR } from '@/lib/grupo-asesor';
+import { getGruposAsesor } from '@/lib/config-store/accessors';
 
 function fail(err: unknown, fallback: string) {
   const message = err instanceof Error ? err.message : fallback;
@@ -16,7 +17,8 @@ export async function GET() {
     const { history, commissions } = await loadSegmentedHistory();
     const settings = coerceSettings(history.settings);
     const income = collectIncome(commissions, settings);
-    const known = new Set<string>(GRUPOS_ASESOR);
+    const catalog = await getGruposAsesor().catch(() => [...GRUPOS_ASESOR]);
+    const known = new Set<string>(catalog);
     for (const cell of income) if (cell.grupo) known.add(cell.grupo);
     for (const p of settings.balances.partners) if (p.grupo) known.add(p.grupo);
     for (const e of settings.balances.expenses) if (e.grupo) known.add(e.grupo);

@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useConsolidation } from '@/lib/context/consolidation-context';
 import {
-  GRUPOS_ASESOR,
   SIN_GRUPO_ASESOR,
   grupoAsesorDePosicion,
   matchesGrupoAsesor,
@@ -417,7 +416,7 @@ export default function CashPage() {
             className="h-9 rounded-md border border-input bg-background px-2 text-sm"
           >
             <option value="all">Todos los grupos asesor</option>
-            {GRUPOS_ASESOR.map((g) => (
+            {state.gruposAsesor.map((g) => (
               <option key={g} value={g}>
                 {g}
               </option>

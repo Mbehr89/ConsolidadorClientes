@@ -13,9 +13,10 @@ import { useConsolidation } from '@/lib/context/consolidation-context';
 import {
   GRUPOS_ASESOR,
   SIN_GRUPO_ASESOR,
+  adoptGrupoAsesor,
   matchesGrupoAsesor,
+  mergeGruposAsesor,
   normalizeGrupoAsesor,
-  type GrupoAsesor,
 } from '@/lib/grupo-asesor';
 
 const BROKERS: BrokerCode[] = ['MS', 'NETX360', 'GMA', 'IEB'];
@@ -35,15 +36,26 @@ interface MappingRow {
   productor: string;
   advisor: string;
   /** '' = sin asignar */
-  grupoAsesor: GrupoAsesor | '';
+  grupoAsesor: string;
 }
 
 interface PendingImport {
   filename: string;
   rows: MappingRow[];
+  addedGrupos: string[];
 }
 
-function storeToRows(store: MappingCuentasStore): MappingRow[] {
+function gruposInStore(store: MappingCuentasStore): string[] {
+  const out: string[] = [];
+  for (const broker of BROKERS) {
+    for (const value of Object.values(store[broker] ?? {})) {
+      if (typeof value !== 'string' && value.grupo_asesor) out.push(value.grupo_asesor);
+    }
+  }
+  return out;
+}
+
+function storeToRows(store: MappingCuentasStore, catalog: readonly string[]): MappingRow[] {
   const rows: MappingRow[] = [];
   for (const broker of BROKERS) {
     const m = store[broker] ?? {};
@@ -51,7 +63,7 @@ function storeToRows(store: MappingCuentasStore): MappingRow[] {
       const titular = typeof value === 'string' ? value : value.titular;
       const productor = typeof value === 'string' ? '' : (value.productor ?? '');
       const advisor = typeof value === 'string' ? '' : (value.advisor ?? '');
-      const grupoAsesor = typeof value === 'string' ? null : normalizeGrupoAsesor(value.grupo_asesor);
+      const grupoAsesor = typeof value === 'string' ? null : normalizeGrupoAsesor(value.grupo_asesor, catalog);
       rows.push({
         id: `${broker}::${cuenta}`,
         broker,
@@ -175,13 +187,16 @@ function mergeDetectedRows(base: MappingRow[], detected: MappingRow[]): MappingR
   });
 }
 
-function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
+function parseMappingExcel(
+  buffer: ArrayBuffer,
+  catalog: readonly string[]
+): { rows: MappingRow[]; addedGrupos: string[] } {
   const wb = read(buffer, { type: 'array' });
   const sheetName = wb.SheetNames[0];
-  if (!sheetName) return [];
+  if (!sheetName) return { rows: [], addedGrupos: [] };
   const sheet = wb.Sheets[sheetName]!;
   const matrix: unknown[][] = utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  if (matrix.length < 2) return [];
+  if (matrix.length < 2) return { rows: [], addedGrupos: [] };
 
   const header = (matrix[0] ?? []).map((c) => String(c ?? '').trim().toLowerCase());
   const iBroker = header.indexOf('broker');
@@ -197,6 +212,7 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
   }
 
   const out: MappingRow[] = [];
+  const known = [...catalog];
   for (let r = 1; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
     const brokerRaw = String(row[iBroker] ?? '').trim().toUpperCase();
@@ -206,12 +222,11 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
     const advisor = iAdvisor >= 0 ? String(row[iAdvisor] ?? '').trim() : '';
     const grupoAsesorRaw = iGrupoAsesor >= 0 ? String(row[iGrupoAsesor] ?? '').trim() : '';
     if (!cuenta && !titular && !brokerRaw) continue;
-    const grupoAsesor = normalizeGrupoAsesor(grupoAsesorRaw);
-    if (grupoAsesorRaw && !grupoAsesor) {
-      throw new Error(
-        `Fila ${r + 1}: grupo asesor inválido "${grupoAsesorRaw}" (opciones: ${GRUPOS_ASESOR.join(', ')})`
-      );
+    const adopted = adoptGrupoAsesor(grupoAsesorRaw, known);
+    if (grupoAsesorRaw && !adopted) {
+      throw new Error(`Fila ${r + 1}: grupo asesor inválido "${grupoAsesorRaw}"`);
     }
+    if (adopted?.isNew) known.push(adopted.name);
 
     const br = BrokerCodeSchema.safeParse(brokerRaw);
     if (!br.success) {
@@ -227,10 +242,10 @@ function parseMappingExcel(buffer: ArrayBuffer): MappingRow[] {
       titular,
       productor,
       advisor,
-      grupoAsesor: grupoAsesor ?? '',
+      grupoAsesor: adopted?.name ?? '',
     });
   }
-  return out;
+  return { rows: out, addedGrupos: known.slice(catalog.length) };
 }
 
 function localDateYmd(): string {
@@ -246,6 +261,8 @@ export default function MappingCuentasPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [filterGrupoAsesor, setFilterGrupoAsesor] = useState<string>('all');
   const [rows, setRows] = useState<MappingRow[]>([]);
+  const [grupos, setGrupos] = useState<string[]>([...GRUPOS_ASESOR]);
+  const [nuevoGrupo, setNuevoGrupo] = useState('');
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -257,10 +274,16 @@ export default function MappingCuentasPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('/api/config/mapping-cuentas');
+      const [res, gruposRes] = await Promise.all([
+        fetch('/api/config/mapping-cuentas'),
+        fetch('/api/config/grupos-asesor'),
+      ]);
       if (!res.ok) throw new Error('No se pudo cargar el mapping');
       const data = (await res.json()) as MappingCuentasStore;
-      const persisted = storeToRows(data);
+      const savedGrupos = gruposRes.ok ? ((await gruposRes.json()) as string[]) : [...GRUPOS_ASESOR];
+      const catalog = mergeGruposAsesor(Array.isArray(savedGrupos) ? savedGrupos : [...GRUPOS_ASESOR], gruposInStore(data)).grupos;
+      setGrupos(catalog.length ? catalog : [...GRUPOS_ASESOR]);
+      const persisted = storeToRows(data, catalog.length ? catalog : GRUPOS_ASESOR);
       const detectedFromPositions = detectedRowsFromPositions(state.allPositions);
       const detectedFromCache = detectedRowsFromCache();
       const mergedDetected = [...detectedFromPositions, ...detectedFromCache];
@@ -323,13 +346,13 @@ export default function MappingCuentasPage() {
       setSuccess(null);
       try {
         const buf = await file.arrayBuffer();
-        const parsed = parseMappingExcel(buf);
-        setPendingImport({ filename: file.name, rows: parsed });
+        const parsed = parseMappingExcel(buf, grupos);
+        setPendingImport({ filename: file.name, rows: parsed.rows, addedGrupos: parsed.addedGrupos });
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error leyendo Excel');
       }
     },
-    []
+    [grupos]
   );
 
   const pendingPreview = useMemo(() => {
@@ -348,15 +371,15 @@ export default function MappingCuentasPage() {
 
   const applyPendingImport = useCallback(() => {
     if (!pendingImport) return;
-    setRows((prev) => {
-      const merged = mergeStore(rowsToStore(prev), rowsToStore(pendingImport.rows));
-      return storeToRows(merged);
-    });
+    const nextGrupos = mergeGruposAsesor(grupos, pendingImport.rows.map((r) => r.grupoAsesor)).grupos;
+    setGrupos(nextGrupos);
+    setRows((prev) => storeToRows(mergeStore(rowsToStore(prev), rowsToStore(pendingImport.rows)), nextGrupos));
+    const nuevos = pendingImport.addedGrupos.length ? ` Grupos nuevos: ${pendingImport.addedGrupos.join(', ')}.` : '';
     setSuccess(
-      `Importación aplicada: ${pendingImport.rows.length} filas (${pendingPreview.newCount} nuevas, ${pendingPreview.overwriteCount} actualizadas).`
+      `Importación aplicada: ${pendingImport.rows.length} filas (${pendingPreview.newCount} nuevas, ${pendingPreview.overwriteCount} actualizadas).${nuevos}`
     );
     setPendingImport(null);
-  }, [pendingImport, pendingPreview.newCount, pendingPreview.overwriteCount]);
+  }, [grupos, pendingImport, pendingPreview.newCount, pendingPreview.overwriteCount]);
 
   const cancelPendingImport = useCallback(() => {
     setPendingImport(null);
@@ -383,9 +406,7 @@ export default function MappingCuentasPage() {
         titular: '',
         productor: '',
         advisor: '',
-        grupoAsesor: filterGrupoAsesor !== 'all' && filterGrupoAsesor !== SIN_GRUPO_ASESOR
-          ? (filterGrupoAsesor as GrupoAsesor)
-          : '',
+        grupoAsesor: filterGrupoAsesor !== 'all' && filterGrupoAsesor !== SIN_GRUPO_ASESOR ? filterGrupoAsesor : '',
       },
     ]);
   }, [filterGrupoAsesor]);
@@ -393,6 +414,42 @@ export default function MappingCuentasPage() {
   const removeRow = useCallback((id: string) => {
     setRows((prev) => prev.filter((r) => r.id !== id));
   }, []);
+
+  const addGrupo = useCallback(() => {
+    const adopted = adoptGrupoAsesor(nuevoGrupo, grupos);
+    if (!adopted) {
+      setError('Escribí un nombre de grupo.');
+      return;
+    }
+    if (!adopted.isNew) {
+      setError(`"${adopted.name}" ya está en la lista.`);
+      return;
+    }
+    setError(null);
+    setGrupos((prev) => [...prev, adopted.name]);
+    setNuevoGrupo('');
+    setSuccess(`Grupo "${adopted.name}" agregado. Guardá para dejarlo fijo.`);
+  }, [grupos, nuevoGrupo]);
+
+  const renameGrupo = useCallback((from: string, raw: string) => {
+    const adopted = adoptGrupoAsesor(raw, grupos.filter((g) => g !== from));
+    if (!adopted || adopted.name === from) return;
+    setGrupos((prev) => prev.map((g) => (g === from ? adopted.name : g)).filter((g, i, all) => all.indexOf(g) === i));
+    setRows((prev) => prev.map((r) => (r.grupoAsesor === from ? { ...r, grupoAsesor: adopted.name } : r)));
+    if (filterGrupoAsesor === from) setFilterGrupoAsesor(adopted.name);
+    setSuccess(
+      adopted.isNew
+        ? `Grupo renombrado a "${adopted.name}". Guardá para dejarlo fijo.`
+        : `Las cuentas de "${from}" pasaron a "${adopted.name}". Guardá para dejarlo fijo.`
+    );
+  }, [filterGrupoAsesor, grupos]);
+
+  const removeGrupo = useCallback((name: string) => {
+    setGrupos((prev) => prev.filter((g) => g !== name));
+    setRows((prev) => prev.map((r) => (r.grupoAsesor === name ? { ...r, grupoAsesor: '' } : r)));
+    if (filterGrupoAsesor === name) setFilterGrupoAsesor('all');
+    setSuccess(`"${name}" salió de la lista. Esas cuentas quedan sin grupo hasta que guardes.`);
+  }, [filterGrupoAsesor]);
 
   const updateRow = useCallback((id: string, patch: Partial<Pick<MappingRow, 'broker' | 'cuenta' | 'titular' | 'productor' | 'advisor' | 'grupoAsesor'>>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -416,13 +473,22 @@ export default function MappingCuentasPage() {
     setSuccess(null);
     setSaving(true);
     try {
+      const catalog = mergeGruposAsesor(grupos, rows.map((r) => r.grupoAsesor)).grupos;
       const store = rowsToStore(rows);
-      const res = await fetch('/api/config/mapping-cuentas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(store),
-      });
-      if (!res.ok) throw new Error('No se pudo guardar');
+      const [gruposRes, res] = await Promise.all([
+        fetch('/api/config/grupos-asesor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(catalog),
+        }),
+        fetch('/api/config/mapping-cuentas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(store),
+        }),
+      ]);
+      if (!gruposRes.ok || !res.ok) throw new Error('No se pudo guardar');
+      setGrupos(catalog);
       setSuccess('Mapping guardado correctamente');
       await Promise.all([load(), refreshGrupoAsesor()]);
     } catch (e) {
@@ -430,7 +496,7 @@ export default function MappingCuentasPage() {
     } finally {
       setSaving(false);
     }
-  }, [rows, load, refreshGrupoAsesor]);
+  }, [grupos, rows, load, refreshGrupoAsesor]);
 
   return (
     <AdminOnly>
@@ -443,6 +509,7 @@ export default function MappingCuentasPage() {
           <span className="font-mono text-xs">titular</span> y opcionales{' '}
           <span className="font-mono text-xs">productor</span>, <span className="font-mono text-xs">advisor</span>; o editá la tabla manualmente.
           También se incluyen automáticamente cuentas detectadas aunque falte titular/advisor, para que puedas completar desde esta pantalla.
+          Los grupos asesores se administran acá: si el Excel trae uno nuevo, se suma a la lista.
         </p>
       </div>
 
@@ -457,9 +524,63 @@ export default function MappingCuentasPage() {
         ))}
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Grupos asesores</CardTitle>
+          <CardDescription>
+            Agregá, renombrá o quitá grupos. Si el Excel trae un grupo que no está en esta lista, se suma al importarlo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <ul className="space-y-2">
+            {grupos.map((g) => (
+              <li key={g} className="flex flex-wrap items-center gap-2">
+                <input
+                  className="h-9 min-w-[12rem] flex-1 rounded-md border bg-background px-2 text-sm"
+                  aria-label={`Nombre de ${g}`}
+                  defaultValue={g}
+                  key={`${g}-name`}
+                  onBlur={(e) => {
+                    const adopted = adoptGrupoAsesor(e.target.value, grupos.filter((name) => name !== g));
+                    if (!adopted) {
+                      e.target.value = g;
+                      return;
+                    }
+                    e.target.value = adopted.name;
+                    renameGrupo(g, adopted.name);
+                  }}
+                />
+                <span className="text-xs text-muted-foreground">{countsByGrupoAsesor.get(g) ?? 0} cuentas</span>
+                <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => removeGrupo(g)}>
+                  Quitar
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addGrupo();
+            }}
+          >
+            <input
+              className="h-9 min-w-[12rem] flex-1 rounded-md border bg-background px-2 text-sm"
+              placeholder="Nuevo grupo asesor"
+              aria-label="Nuevo grupo asesor"
+              value={nuevoGrupo}
+              onChange={(e) => setNuevoGrupo(e.target.value)}
+            />
+            <Button type="submit" variant="outline" disabled={!nuevoGrupo.trim()}>
+              Agregar grupo
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-muted-foreground">Grupo asesor:</span>
-        {[...GRUPOS_ASESOR, SIN_GRUPO_ASESOR].map((g) => {
+        {[...grupos, SIN_GRUPO_ASESOR].map((g) => {
           const active = filterGrupoAsesor === g;
           return (
             <button
@@ -482,7 +603,7 @@ export default function MappingCuentasPage() {
           <CardTitle className="text-lg">Importar Excel</CardTitle>
           <CardDescription>
             Primera fila: broker, cuenta (opcionales: titular, productor, advisor, grupo_asesor) — broker: MS, NETX360, GMA,
-            IEB — grupo_asesor: {GRUPOS_ASESOR.join(', ')}
+            IEB. Un grupo_asesor que no exista se agrega a la lista.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -525,6 +646,7 @@ export default function MappingCuentasPage() {
             <CardTitle className="text-lg">Preview de importación</CardTitle>
             <CardDescription>
               Archivo: <span className="font-mono text-xs">{pendingImport.filename}</span> — {pendingPreview.total} fila(s), {pendingPreview.newCount} nuevas, {pendingPreview.overwriteCount} a sobrescribir.
+              {pendingImport.addedGrupos.length > 0 && ` Grupos nuevos: ${pendingImport.addedGrupos.join(', ')}.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -682,10 +804,10 @@ export default function MappingCuentasPage() {
                         <select
                           className="h-9 w-full min-w-[150px] rounded-md border bg-background px-2 text-sm"
                           value={r.grupoAsesor}
-                          onChange={(e) => updateRow(r.id, { grupoAsesor: e.target.value as GrupoAsesor | '' })}
+                          onChange={(e) => updateRow(r.id, { grupoAsesor: e.target.value })}
                         >
                           <option value="">Sin asignar</option>
-                          {GRUPOS_ASESOR.map((g) => (
+                          {grupos.map((g) => (
                             <option key={g} value={g}>
                               {g}
                             </option>

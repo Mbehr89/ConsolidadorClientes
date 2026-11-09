@@ -103,6 +103,10 @@ export const MappingCuentasStoreSchema = z.record(
 );
 export type MappingCuentasStore = z.infer<typeof MappingCuentasStoreSchema>;
 
+/** Catálogo de grupos asesores administrado en Mapping cuentas. */
+export const GruposAsesorStoreSchema = z.array(z.string().trim().min(1).max(80));
+export type GruposAsesorStore = z.infer<typeof GruposAsesorStoreSchema>;
+
 // ─── Tipo cuenta MS (prefijos) ──────────────────────────
 
 export const TipoCuentaMsStoreSchema = z.record(

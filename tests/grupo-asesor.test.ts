@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GRUPOS_ASESOR,
   SIN_GRUPO_ASESOR,
   buildGrupoAsesorByCuenta,
   clienteMatchesGrupoAsesor,
   grupoAsesorDePosicion,
   matchesGrupoAsesor,
+  mergeGruposAsesor,
   normalizeGrupoAsesor,
 } from '@/lib/grupo-asesor';
 import type { MappingCuentasStore } from '@/lib/config-store/types';
@@ -46,5 +48,14 @@ describe('grupo asesor', () => {
     expect(clienteMatchesGrupoAsesor(mixto, 'Oficina Vieja')).toBe(true);
     expect(clienteMatchesGrupoAsesor(mixto, SIN_GRUPO_ASESOR)).toBe(false);
     expect(clienteMatchesGrupoAsesor({ grupos_asesor: [] }, SIN_GRUPO_ASESOR)).toBe(true);
+  });
+
+  it('suma un grupo nuevo y reconoce la variante de uno que ya existe', () => {
+    const { grupos, added } = mergeGruposAsesor(GRUPOS_ASESOR, ['oficina vieja', 'Behr Norte', 'behr norte', '']);
+    expect(added).toEqual(['Behr Norte']);
+    expect(grupos).toEqual([...GRUPOS_ASESOR, 'Behr Norte']);
+    expect(normalizeGrupoAsesor('BEHR NORTE', grupos)).toBe('Behr Norte');
+    expect(normalizeGrupoAsesor('Otro')).toBeNull();
+    expect(mergeGruposAsesor(grupos, ['Grupo 1', 'grupo 2']).added).toEqual(['Grupo 1', 'grupo 2']);
   });
 });
