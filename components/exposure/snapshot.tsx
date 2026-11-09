@@ -53,11 +53,9 @@ function exposureOf(account: ExposureAccount, dim: DimId, index: number, lookThr
 export function ExposureSnapshot({
   accounts,
   fechas,
-  rowLabel = 'Cuenta',
 }: {
   accounts: ExposureAccount[];
   fechas: string[];
-  rowLabel?: string;
 }) {
   const [lookThrough, setLookThrough] = useState(true);
   const [sort, setSort] = useState<'aum' | 'name'>('aum');
@@ -74,12 +72,21 @@ export function ExposureSnapshot({
           exposureOf(b, pick.dim, pick.index, lookThrough) - exposureOf(a, pick.dim, pick.index, lookThrough) ||
           aumOf(b) - aumOf(a),
       );
-    } else if (sort === 'name') list.sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    else list.sort((a, b) => aumOf(b) - aumOf(a) || a.name.localeCompare(b.name, 'es'));
+    } else if (sort === 'name') list.sort((a, b) => a.cuenta.localeCompare(b.cuenta, 'es'));
+    else list.sort((a, b) => aumOf(b) - aumOf(a) || a.cuenta.localeCompare(b.cuenta, 'es'));
     return list;
   }, [accounts, lookThrough, pick, sort]);
 
+  const focus = pick?.accountId === '*' ? book : accounts.find((account) => account.id === pick?.accountId) ?? book;
+  const parts = pick ? sliceParts(focus, pick.dim, pick.index, lookThrough) : [];
+  const partTotal = sum(parts.map((part) => part.amount));
   const missing = unclassifiedLines(book);
+  const dimMeta = pick ? DIMS.find((dim) => dim.id === pick.dim) : null;
+  const catLabel = pick
+    ? pick.dim === 'sector'
+      ? sectorLabel(pick.index, lookThrough)
+      : dimMeta?.cats[pick.index]?.label
+    : null;
 
   function togglePick(next: Pick) {
     setShowMissing(false);
@@ -122,7 +129,7 @@ export function ExposureSnapshot({
               setSort((value) => (value === 'aum' ? 'name' : 'aum'));
             }}
           >
-            Orden: {pick ? 'exposición' : sort === 'aum' ? 'AUM' : rowLabel.toLowerCase()}
+            Orden: {pick ? 'exposición' : sort === 'aum' ? 'AUM' : 'cuenta'}
           </button>
         </div>
       </div>
@@ -139,6 +146,32 @@ export function ExposureSnapshot({
           Sin clasificar: {usd(book.unclassified)} en {missing.length} {missing.length === 1 ? 'activo' : 'activos'}.
           No entran en Otros.
         </button>
+      )}
+
+      {showMissing && (
+        <Composition
+          title="Sin clasificar"
+          subtitle="Estos activos no tienen asset class, sector o región. No se esconden en Otros."
+          rows={missing.map((line) => ({
+            name: line.name,
+            source: line.ticker,
+            amount: line.amount,
+            share: book.unclassified > 0 ? (line.amount / book.unclassified) * 100 : 0,
+          }))}
+        />
+      )}
+
+      {pick && catLabel && dimMeta && (
+        <Composition
+          title={`${catLabel} · ${focus.name}`}
+          subtitle={`${dimMeta.title}. ${pct(shareOfBase(focus, pick, partTotal))} de la base, abierto en los activos de abajo.`}
+          rows={parts.map((part) => ({
+            name: part.name,
+            source: part.source,
+            amount: part.amount,
+            share: partTotal > 0 ? (part.amount / partTotal) * 100 : 0,
+          }))}
+        />
       )}
 
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
@@ -160,8 +193,6 @@ export function ExposureSnapshot({
           account={book}
           lookThrough={lookThrough}
           pick={pick}
-          showMissing={showMissing}
-          missing={missing}
           onPick={togglePick}
           onTip={setTip}
         />
@@ -171,8 +202,6 @@ export function ExposureSnapshot({
             account={account}
             lookThrough={lookThrough}
             pick={pick}
-            showMissing={false}
-            missing={[]}
             onPick={togglePick}
             onTip={setTip}
           />
@@ -182,7 +211,7 @@ export function ExposureSnapshot({
       <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
         <div className="min-w-[960px]">
           <div className="grid grid-cols-[220px_1fr_1fr_1fr] gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-            <span>{rowLabel}</span>
+            <span>Cuenta</span>
             {DIMS.map((dim) => (
               <span key={dim.id}>
                 {dim.title}
@@ -190,23 +219,13 @@ export function ExposureSnapshot({
               </span>
             ))}
           </div>
-          <AccountRow
-            account={book}
-            lookThrough={lookThrough}
-            pick={pick}
-            showMissing={showMissing}
-            missing={missing}
-            onPick={togglePick}
-            onTip={setTip}
-          />
+          <AccountRow account={book} lookThrough={lookThrough} pick={pick} onPick={togglePick} onTip={setTip} />
           {rows.map((account) => (
             <AccountRow
               key={account.id}
               account={account}
               lookThrough={lookThrough}
               pick={pick}
-              showMissing={false}
-              missing={[]}
               onPick={togglePick}
               onTip={setTip}
             />
@@ -236,7 +255,7 @@ function Composition({
   rows: { name: string; source: string; amount: number; share: number }[];
 }) {
   return (
-    <section className="border-t border-border bg-muted/30 px-4 py-3">
+    <section className="rounded-lg border border-border bg-card p-4">
       <h3 className="text-sm font-medium">{title}</h3>
       <p className="mb-3 text-xs text-muted-foreground">{subtitle}</p>
       {rows.length === 0 ? (
@@ -267,8 +286,10 @@ function AccountCard(props: RowProps) {
     <article className="rounded-lg border border-border bg-card p-3">
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{rowTitle(account)}</p>
-          <p className="truncate text-xs text-muted-foreground">{rowSubtitle(account)}</p>
+          <p className="truncate text-sm font-medium">{account.id === '*' ? 'Consolidado' : account.cuenta}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {account.id === '*' ? `${account.lines.length} líneas` : `${account.broker} · ${account.titular}`}
+          </p>
         </div>
         <p className="text-sm tabular-nums">{usd(aumOf(account))}</p>
       </header>
@@ -282,7 +303,6 @@ function AccountCard(props: RowProps) {
           </div>
         ))}
       </div>
-      <RowDetail {...props} />
     </article>
   );
 }
@@ -291,73 +311,23 @@ type RowProps = {
   account: ExposureAccount;
   lookThrough: boolean;
   pick: Pick | null;
-  showMissing: boolean;
-  missing: ReturnType<typeof unclassifiedLines>;
   onPick: (pick: Pick) => void;
   onTip: (tip: { text: string; x: number; y: number } | null) => void;
 };
 
-function rowTitle(account: ExposureAccount): string {
-  if (account.id === '*') return 'Consolidado';
-  if (account.broker) return account.cuenta;
-  return account.name;
-}
-
-function rowSubtitle(account: ExposureAccount): string {
-  if (account.id === '*') return `${account.lines.length} líneas`;
-  return [account.broker, account.titular].filter(Boolean).join(' · ');
-}
-
 function AccountRow({ account, ...props }: RowProps) {
   return (
-    <div className="border-b border-border last:border-b-0">
-      <div className="grid grid-cols-[220px_1fr_1fr_1fr] items-center gap-3 px-3 py-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{rowTitle(account)}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {account.id === '*' ? usd(aumOf(account)) : rowSubtitle(account)}
-          </p>
-        </div>
-        {DIMS.map((dim) => (
-          <Bar key={dim.id} dim={dim.id} account={account} {...props} />
-        ))}
+    <div className="grid grid-cols-[220px_1fr_1fr_1fr] items-center gap-3 border-b border-border px-3 py-3 last:border-b-0">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{account.id === '*' ? 'Consolidado' : account.cuenta}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {account.id === '*' ? usd(aumOf(account)) : `${account.broker} · ${usd(aumOf(account))}`}
+        </p>
       </div>
-      <RowDetail account={account} {...props} />
+      {DIMS.map((dim) => (
+        <Bar key={dim.id} dim={dim.id} account={account} {...props} />
+      ))}
     </div>
-  );
-}
-
-function RowDetail({ account, pick, lookThrough, showMissing, missing }: RowProps) {
-  if (showMissing && account.id === '*') {
-    return (
-      <Composition
-        title="Sin clasificar"
-        subtitle="Estos activos no tienen asset class, sector o región. No se esconden en Otros."
-        rows={missing.map((line) => ({
-          name: line.name,
-          source: line.ticker,
-          amount: line.amount,
-          share: account.unclassified > 0 ? (line.amount / account.unclassified) * 100 : 0,
-        }))}
-      />
-    );
-  }
-  if (!pick || pick.accountId !== account.id) return null;
-  const meta = DIMS.find((dim) => dim.id === pick.dim);
-  const label = pick.dim === 'sector' ? sectorLabel(pick.index, lookThrough) : meta?.cats[pick.index]?.label ?? '';
-  const parts = sliceParts(account, pick.dim, pick.index, lookThrough);
-  const partTotal = sum(parts.map((part) => part.amount));
-  return (
-    <Composition
-      title={`${label} · ${rowTitle(account)}`}
-      subtitle={`${meta?.title ?? ''}. ${pct(shareOfBase(account, pick, partTotal))} de la base de este portfolio.`}
-      rows={parts.map((part) => ({
-        name: part.name,
-        source: part.source,
-        amount: part.amount,
-        share: partTotal > 0 ? (part.amount / partTotal) * 100 : 0,
-      }))}
-    />
   );
 }
 
@@ -373,8 +343,8 @@ function Bar({ account, dim, lookThrough, pick, onPick, onTip }: RowProps & { di
       {values.map((value, index) => {
         if (value <= 0) return null;
         const share = (value / base) * 100;
-        const active = pick?.accountId === account.id && pick.dim === dim && pick.index === index;
-        const dimmed = pick?.accountId === account.id && pick.dim === dim && !active;
+        const active = pick?.dim === dim && pick.index === index;
+        const dimmed = pick != null && pick.dim === dim && !active;
         const label = dim === 'sector' ? sectorLabel(index, lookThrough) : meta.cats[index]?.label ?? '';
         const color = meta.cats[index]?.color ?? '#898781';
         return (

@@ -1,33 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ExposureSnapshot } from '@/components/exposure/snapshot';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useConsolidation } from '@/lib/context/consolidation-context';
-import { accountsFromPositions, consolidate } from '@/lib/exposure/engine';
-import type { ExposureAccount } from '@/lib/exposure/types';
-import type { Position } from '@/lib/schema';
-
-type View = 'cuenta' | 'asesor' | 'grupo';
-
-const ROW_LABEL: Record<View, string> = {
-  cuenta: 'Cuenta',
-  asesor: 'Asesor',
-  grupo: 'Grupo',
-};
+import { accountsFromPositions } from '@/lib/exposure/engine';
 
 export default function DashboardPage() {
   const { state } = useConsolidation();
   if (!state.hasParsed || state.allPositions.length === 0) return <EmptyDashboard />;
-  return (
-    <Book
-      positions={state.allPositions}
-      grupos={state.grupos}
-      advisorsByCliente={state.advisorsByCliente}
-    />
-  );
+  return <Book positions={state.allPositions} grupos={state.grupos} />;
 }
 
 function EmptyDashboard() {
@@ -60,24 +44,24 @@ function EmptyDashboard() {
 function Book({
   positions,
   grupos,
-  advisorsByCliente,
 }: {
-  positions: Position[];
+  positions: ReturnType<typeof useConsolidation>['state']['allPositions'];
   grupos: ReturnType<typeof useConsolidation>['state']['grupos'];
-  advisorsByCliente: Record<string, string>;
 }) {
-  const [view, setView] = useState<View>('asesor');
+  const [grupoId, setGrupoId] = useState('all');
+  const [hidden, setHidden] = useState<Record<string, boolean>>({});
 
-  const rows = useMemo(() => {
-    if (view === 'cuenta') return accountsFromPositions(positions);
-    if (view === 'asesor') {
-      return rollup(positions, (position) => advisorOf(position, advisorsByCliente));
-    }
-    const nameOf = new Map(grupos.map((grupo) => [grupo.id, grupo.nombre]));
-    return rollup(positions, (position) => (position.grupo_id ? nameOf.get(position.grupo_id) ?? 'Sin grupo' : 'Sin grupo'));
-  }, [advisorsByCliente, grupos, positions, view]);
+  const inGroup = useMemo(() => {
+    if (grupoId === 'all') return positions;
+    const grupo = grupos.find((item) => item.id === grupoId);
+    if (!grupo) return positions;
+    const ids = new Set(grupo.cliente_ids);
+    return positions.filter((position) => ids.has(position.cliente_id) || position.grupo_id === grupoId);
+  }, [grupoId, grupos, positions]);
 
-  const fechas = useMemo(() => [...new Set(positions.map((position) => position.fecha_reporte))].sort(), [positions]);
+  const universe = useMemo(() => accountsFromPositions(inGroup), [inGroup]);
+  const selected = useMemo(() => universe.filter((account) => !hidden[account.id]), [hidden, universe]);
+  const fechas = useMemo(() => [...new Set(inGroup.map((position) => position.fecha_reporte))].sort(), [inGroup]);
 
   return (
     <div className="page-shell">
@@ -85,71 +69,63 @@ function Book({
         <div>
           <h2 className="page-title">Dashboard</h2>
           <p className="page-subtitle">
-            Elegí si el pantallazo es por asesor, por grupo o por cuenta. Tocá un tramo y, debajo de esa cartera, ves qué activos lo componen.
+            El consolidado y, debajo, cada cuenta. Tocá un tramo para ver qué activos arman ese porcentaje.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Ver</span>
-          <select
-            value={view}
-            onChange={(event) => setView(event.target.value as View)}
-            className="h-9 rounded-md border bg-background px-3 text-sm"
-          >
-            <option value="asesor">Por asesor</option>
-            <option value="grupo">Por grupo</option>
-            <option value="cuenta">Por cuenta</option>
-          </select>
-        </label>
       </div>
 
-      {rows.length === 0 ? (
+      <div className="flex flex-wrap gap-2">
+        <FilterChip active={grupoId === 'all'} onClick={() => { setGrupoId('all'); setHidden({}); }}>
+          Todas las cuentas
+        </FilterChip>
+        {grupos.map((grupo) => (
+          <FilterChip
+            key={grupo.id}
+            active={grupoId === grupo.id}
+            onClick={() => { setGrupoId(grupo.id); setHidden({}); }}
+          >
+            {grupo.nombre}
+          </FilterChip>
+        ))}
+      </div>
+
+      {universe.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {universe.map((account) => (
+            <FilterChip
+              key={account.id}
+              active={!hidden[account.id]}
+              onClick={() => setHidden((current) => ({ ...current, [account.id]: !current[account.id] }))}
+            >
+              {account.broker} {account.cuenta}
+            </FilterChip>
+          ))}
+        </div>
+      )}
+
+      {selected.length === 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>Nada para mostrar en esta vista</CardTitle>
-            <CardDescription>No hay posiciones con valor de mercado en la selección.</CardDescription>
+            <CardTitle>Ninguna cuenta en esta selección</CardTitle>
+            <CardDescription>Activá al menos una cuenta, o volvé a todas.</CardDescription>
           </CardHeader>
         </Card>
       ) : (
-        <ExposureSnapshot key={view} accounts={rows} fechas={fechas} rowLabel={ROW_LABEL[view]} />
+        <ExposureSnapshot accounts={selected} fechas={fechas} />
       )}
     </div>
   );
 }
 
-function advisorOf(position: Position, advisorsByCliente: Record<string, string>): string {
-  const mapped = advisorsByCliente[position.cliente_id]?.trim();
-  if (mapped) return mapped;
-  const productor = position.productor?.trim();
-  if (productor && !/^\d+$/.test(productor)) return productor;
-  return 'Sin asesor';
-}
-
-function rollup(positions: readonly Position[], labelOf: (position: Position) => string): ExposureAccount[] {
-  const buckets = new Map<string, Position[]>();
-  for (const position of positions) {
-    const label = labelOf(position);
-    const list = buckets.get(label) ?? [];
-    list.push(position);
-    buckets.set(label, list);
-  }
-  const rows = [...buckets.entries()].map(([label, list]) => {
-    const merged = consolidate(accountsFromPositions(list));
-    const cuentas = new Set(list.map((position) => `${position.broker}::${position.cuenta}`));
-    const n = cuentas.size;
-    return {
-      ...merged,
-      id: label,
-      name: label,
-      cuenta: label,
-      broker: '',
-      titular: `${n} ${n === 1 ? 'cuenta' : 'cuentas'}`,
-    };
-  });
-  rows.sort((a, b) => {
-    const aSin = a.name.startsWith('Sin ');
-    const bSin = b.name.startsWith('Sin ');
-    if (aSin !== bSin) return aSin ? 1 : -1;
-    return b.asset.reduce((s, v) => s + v, 0) - a.asset.reduce((s, v) => s + v, 0);
-  });
-  return rows;
+function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1 text-sm ${active ? 'border-foreground bg-foreground text-background' : 'border-border text-muted-foreground'}`}
+    >
+      {children}
+    </button>
+  );
 }
