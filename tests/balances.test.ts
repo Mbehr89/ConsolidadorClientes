@@ -3,7 +3,7 @@ import { applyImport, emptyHistory } from '@/lib/aranceles/history';
 import { defaultSettings } from '@/lib/aranceles/settings';
 import type { NormalizedRow } from '@/lib/aranceles/types';
 import { coerceBalances } from '@/lib/balances/config';
-import { buildCompanyFlow, buildMonthBalances, monthsMissingFx, unify } from '@/lib/balances/compute';
+import { buildCompanyFlow, buildMonthBalances, buildMonthlyFlows, monthsMissingFx, unify } from '@/lib/balances/compute';
 import { collectIncome } from '@/lib/balances/income';
 import type { IncomeCell } from '@/lib/balances/compute';
 
@@ -191,6 +191,39 @@ describe('balances', () => {
     expect(flow.partners.find((p) => p.key === 'ana')).toMatchObject({ equity: 0.7, profit: 0.6 });
     expect(flow.omitted).toEqual([{ month: '2026-10', grupo: 'Grupo Familia' }]);
     expect(flow.lines.some((l) => l.label.includes('999'))).toBe(false);
+
+    const months = buildMonthlyFlows(
+      [
+        sept,
+        { month: '2026-10', grupo: 'Oficina Vieja', ars: 500, usd: 0, cable: 0 },
+        { month: '2026-10', grupo: 'Grupo Familia', ars: 0, usd: 5, cable: 0 },
+        { month: '2026-08', grupo: 'Grupo Familia', ars: 999, usd: 0, cable: 0 },
+      ],
+      {
+        partners: [
+          { id: 'a', name: 'Ana', grupo: 'Grupo Familia', equity: 0.7, profit: 0.6 },
+          { id: 'b', name: 'Luis', grupo: 'Grupo Familia', equity: 0.3, profit: 0.4 },
+          { id: 'c', name: 'Ana', grupo: 'Oficina Vieja', equity: 0.7, profit: 0.6 },
+        ],
+        expenses: [
+          { id: 's', grupo: 'Grupo Familia', kind: 'sueldo', label: 'Sueldo de Ana', month: '2026-09', currency: 'ARS', amount: 1000 },
+          { id: 'g', grupo: 'Grupo Familia', kind: 'alquiler', label: 'Oficina', month: '2026-09', currency: 'USD', amount: 2 },
+          { id: 'o', grupo: 'Oficina Vieja', kind: 'impuestos', label: 'IIBB', month: '2026-10', currency: 'ARS', amount: 100 },
+        ],
+        fx: [{ month: '2026-09', arsPerUsd: 1000 }],
+      },
+      ['Grupo Familia', 'Oficina Vieja'],
+      '2026-09',
+      '2026-10',
+      'ARS'
+    );
+    expect(months.map((m) => m.month)).toEqual(['2026-09', '2026-10']);
+    const septResult = months[0]!.flow.lines.find((l) => l.id === 'result');
+    const octResult = months[1]!.flow.lines.find((l) => l.id === 'result');
+    expect(septResult?.total).toBeCloseTo(10000);
+    expect(octResult?.total).toBeCloseTo(400);
+    expect((septResult?.total ?? 0) + (octResult?.total ?? 0)).toBeCloseTo(flow.result ?? 0);
+    expect(months[1]!.flow.omitted).toEqual([{ month: '2026-10', grupo: 'Grupo Familia' }]);
   });
 
   it('sin tipo de cambio el estado no inventa el resultado', () => {

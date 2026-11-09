@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { ErrorBlock, LoadingBlock, inputClass } from '@/components/aranceles/shared';
 import { formatMoney, formatMonthLong } from '@/lib/aranceles/format';
 import type { BalancesConfig } from '@/lib/balances/config';
-import { buildCompanyFlow, type CompanyFlow, type DisplayCurrency, type IncomeCell } from '@/lib/balances/compute';
+import {
+  buildCompanyFlow,
+  buildMonthlyFlows,
+  type CompanyFlow,
+  type DisplayCurrency,
+  type FlowLine,
+  type IncomeCell,
+} from '@/lib/balances/compute';
 import { cn } from '@/lib/utils';
 
 type Payload = {
@@ -65,6 +72,7 @@ export default function BalanceStatementPage() {
   const [to, setTo] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[] | null>(null);
   const [byPartner, setByPartner] = useState(true);
+  const [layout, setLayout] = useState<'agregado' | 'mensual'>('agregado');
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +114,12 @@ export default function BalanceStatementPage() {
     return buildCompanyFlow(payload.income, payload.config, grupos, effectiveFrom, effectiveTo, display);
   }, [payload, selected, effectiveFrom, effectiveTo, display]);
 
+  const months = useMemo(() => {
+    if (!payload || !effectiveFrom || !effectiveTo) return [];
+    const grupos = selected.map((g) => (g === NONE ? null : g));
+    return buildMonthlyFlows(payload.income, payload.config, grupos, effectiveFrom, effectiveTo, display);
+  }, [payload, selected, effectiveFrom, effectiveTo, display]);
+
   if (loading) return <LoadingBlock label="Armando el balance…" />;
   if (error || !payload) {
     return <ErrorBlock message={error ?? 'No se pudo armar el balance.'} />;
@@ -135,6 +149,26 @@ export default function BalanceStatementPage() {
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-md border border-border p-0.5">
+            {(
+              [
+                ['agregado', 'Agregado'],
+                ['mensual', 'Mes a mes'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={cn(
+                  'h-8 rounded px-3 text-sm',
+                  layout === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
+                )}
+                onClick={() => setLayout(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             className={cn(
@@ -183,15 +217,179 @@ export default function BalanceStatementPage() {
         })}
       </div>
 
-      <Statement
-        flow={flow}
-        display={display}
-        period={periodLabel(effectiveFrom, effectiveTo)}
-        groups={selected}
-        showPartners={showPartners}
-        showUnassigned={showUnassigned}
-      />
+      {layout === 'agregado' ? (
+        <Statement
+          flow={flow}
+          display={display}
+          period={periodLabel(effectiveFrom, effectiveTo)}
+          groups={selected}
+          showPartners={showPartners}
+          showUnassigned={showUnassigned}
+        />
+      ) : (
+        <MonthlyFlow
+          months={months}
+          total={flow}
+          display={display}
+          period={periodLabel(effectiveFrom, effectiveTo)}
+          groups={selected}
+          showPartners={showPartners}
+          showUnassigned={showUnassigned}
+        />
+      )}
     </div>
+  );
+}
+
+function lineOf(flow: CompanyFlow, id: string): FlowLine | undefined {
+  return flow.lines.find((line) => line.id === id);
+}
+
+function expenseTotal(flow: CompanyFlow): number {
+  return flow.lines.filter((line) => line.id.startsWith('kind:')).reduce((sum, line) => sum + line.total, 0);
+}
+
+function MonthlyFlow({
+  months,
+  total,
+  display,
+  period,
+  groups,
+  showPartners,
+  showUnassigned,
+}: {
+  months: { month: string; flow: CompanyFlow }[];
+  total: CompanyFlow;
+  display: DisplayCurrency;
+  period: string;
+  groups: string[];
+  showPartners: boolean;
+  showUnassigned: boolean;
+}) {
+  const groupNames = groups.map((g) => g || 'Sin grupo');
+  const omitted = months.flatMap((item) => item.flow.omitted);
+  const withoutPartners = [...new Set(months.flatMap((item) => item.flow.groupsWithoutPartners.map((g) => g ?? '')))];
+  const closed = total.lines.length > 0;
+
+  function cell(flow: CompanyFlow, pick: (flow: CompanyFlow) => number): string {
+    if (!flow.lines.length) return '—';
+    return money(pick(flow), display);
+  }
+
+  function share(flow: CompanyFlow, key: string): string {
+    const result = lineOf(flow, 'result');
+    if (!result) return '—';
+    return money(result.partners[key] ?? 0, display);
+  }
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-card">
+      <header className="space-y-1 border-b border-border px-4 py-4 sm:px-6">
+        <p className="text-xs uppercase tracking-wider text-muted-foreground">Flujo mes a mes</p>
+        <h3 className="text-lg font-medium">{period}</h3>
+        <p className="text-sm text-muted-foreground">
+          {groupNames.length ? groupNames.join(' · ') : 'Ningún grupo seleccionado'}
+          {' · '}
+          {display === 'ARS' ? 'en pesos' : 'en dólares'}
+          {'. El total es el resultado agregado del período.'}
+        </p>
+      </header>
+
+      {months.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground sm:px-6">
+          No hay aranceles, sueldos ni gastos para este período y estos grupos.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[40rem] text-sm">
+            <thead>
+              <tr className="border-b text-xs text-muted-foreground">
+                <th className="px-4 py-2 text-left font-medium sm:px-6">Mes</th>
+                <th className="px-3 py-2 text-right font-medium">Ingresos</th>
+                <th className="px-3 py-2 text-right font-medium">Sueldos</th>
+                <th className="px-3 py-2 text-right font-medium">Gastos</th>
+                <th className="px-3 py-2 text-right font-medium">Resultado</th>
+                {showPartners &&
+                  total.partners.map((partner) => (
+                    <th key={partner.key} className="px-3 py-2 text-right font-medium">
+                      <span className="block text-foreground">{partner.name}</span>
+                      <span className="block font-normal">
+                        {partner.equity === null || partner.profit === null
+                          ? 'según el grupo'
+                          : `${pct(partner.equity)} equity · ${pct(partner.profit)} beneficio`}
+                      </span>
+                    </th>
+                  ))}
+                {showUnassigned && <th className="px-3 py-2 text-right font-medium">Sin asignar</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {months.map(({ month, flow }) => (
+                <tr key={month} className="border-b">
+                  <td className="px-4 py-2 sm:px-6">{sentence(formatMonthLong(month))}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{cell(flow, (item) => lineOf(item, 'income')?.total ?? 0)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{cell(flow, (item) => lineOf(item, 'salaries')?.total ?? 0)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{cell(flow, expenseTotal)}</td>
+                  <td className="px-3 py-2 text-right font-medium tabular-nums">{cell(flow, (item) => lineOf(item, 'result')?.total ?? 0)}</td>
+                  {showPartners &&
+                    total.partners.map((partner) => (
+                      <td key={partner.key} className="px-3 py-2 text-right tabular-nums">
+                        {share(flow, partner.key)}
+                      </td>
+                    ))}
+                  {showUnassigned && (
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {lineOf(flow, 'result') ? money(lineOf(flow, 'result')?.unassigned ?? 0, display) : '—'}
+                    </td>
+                  )}
+                </tr>
+              ))}
+              <tr className="border-t-2 border-foreground/20 bg-muted/40 font-semibold">
+                <td className="px-4 py-3 sm:px-6">Total</td>
+                <td className="px-3 py-3 text-right tabular-nums">{closed ? money(lineOf(total, 'income')?.total ?? 0, display) : '—'}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{closed ? money(lineOf(total, 'salaries')?.total ?? 0, display) : '—'}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{closed ? money(expenseTotal(total), display) : '—'}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{closed ? money(lineOf(total, 'result')?.total ?? 0, display) : '—'}</td>
+                {showPartners &&
+                  total.partners.map((partner) => (
+                    <td key={partner.key} className="px-3 py-3 text-right tabular-nums">
+                      {closed ? money(lineOf(total, 'result')?.partners[partner.key] ?? 0, display) : '—'}
+                    </td>
+                  ))}
+                {showUnassigned && (
+                  <td className="px-3 py-3 text-right tabular-nums">
+                    {closed ? money(lineOf(total, 'result')?.unassigned ?? 0, display) : '—'}
+                  </td>
+                )}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(omitted.length > 0 || withoutPartners.length > 0) && (
+        <footer className="space-y-1 border-t border-border px-4 py-3 text-xs text-amber-700 dark:text-amber-400 sm:px-6">
+          {omitted.length > 0 && (
+            <p>
+              {omitted.length === 1 ? 'No entra' : 'No entran'}{' '}
+              {Object.entries(
+                omitted.reduce<Record<string, string[]>>((acc, item) => {
+                  const key = item.grupo ?? 'Sin grupo';
+                  acc[key] = [...(acc[key] ?? []), item.month];
+                  return acc;
+                }, {})
+              )
+                .map(([grupo, list]) => `${monthSpan(list)} de ${grupo}`)
+                .join('; ')}
+              : falta el tipo de cambio. El mes figura igual con lo que sí se pudo unificar.
+            </p>
+          )}
+          {withoutPartners.length > 0 && (
+            <p>{withoutPartners.map((g) => g || 'Sin grupo').join(', ')} no tiene socios: su resultado queda sin asignar.</p>
+          )}
+        </footer>
+      )}
+    </section>
   );
 }
 

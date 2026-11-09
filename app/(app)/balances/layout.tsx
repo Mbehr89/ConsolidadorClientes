@@ -16,7 +16,7 @@ export default function BalancesLayout({ children }: { children: React.ReactNode
       <div>
         <h2 className="page-title">Balances</h2>
         <p className="page-subtitle">
-          El resultado de los grupos como el de una empresa, y el armado de socios, sueldos, gastos y tipo de cambio.
+          El resultado de los grupos como el de una empresa, agregado o mes a mes, y el armado de socios, sueldos, gastos y tipo de cambio.
         </p>
       </div>
       <nav className="flex flex-wrap gap-1 border-b border-border">

@@ -433,3 +433,28 @@ export function buildCompanyFlow(
     omitted,
   };
 }
+
+/** El mismo estado de resultados, un mes por vez, en el orden del período. */
+export function buildMonthlyFlows(
+  income: readonly IncomeCell[],
+  config: BalancesConfig,
+  grupos: readonly (string | null)[],
+  from: string,
+  to: string,
+  display: DisplayCurrency
+): { month: string; flow: CompanyFlow }[] {
+  const start = from <= to ? from : to;
+  const end = from <= to ? to : from;
+  const selected = new Set(grupos.map((g) => g ?? ''));
+  const months = new Set<string>();
+  for (const cell of income) {
+    if (selected.has(cell.grupo ?? '') && cell.month >= start && cell.month <= end) months.add(cell.month);
+  }
+  for (const expense of config.expenses) {
+    if (selected.has(expense.grupo ?? '') && expense.month >= start && expense.month <= end) months.add(expense.month);
+  }
+  return [...months].sort().map((month) => ({
+    month,
+    flow: buildCompanyFlow(income, config, grupos, month, month, display),
+  }));
+}
