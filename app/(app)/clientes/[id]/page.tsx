@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { brokerColorClass, formatCompact, formatCurrency, formatPct, titularTipoClass } from '@/lib/utils';
 import { BROKERS, isOffshore } from '@/lib/brokers';
-import type { Position, ClaseActivo } from '@/lib/schema';
+import type { Position, ClaseActivo, BrokerCode } from '@/lib/schema';
 import type { BondPaymentEvent } from '@/lib/bonds/types';
 import { computeBondYieldMetricsForPosition } from '@/lib/bonds/position-yield';
 import type { BondYieldMetrics } from '@/lib/bonds/types';
@@ -27,6 +27,8 @@ import { exportExecutiveFlowReportPdf, exportFlowReportPdf } from '@/lib/export/
 import { formatArsPrice, formatUsdPrice } from '@/lib/format-position-price';
 import { instrumentKey } from '@/lib/analysis/exposure';
 
+const BROKER_ORDER: BrokerCode[] = ['MS', 'NETX360', 'GMA', 'IEB'];
+
 export default function ClienteDetailPage() {
   const params = useParams();
   const clienteId = params.id as string;
@@ -36,7 +38,9 @@ export default function ClienteDetailPage() {
   const [sortBy, setSortBy] = useState<'valor_usd' | 'pct_portfolio' | 'clase'>('valor_usd');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selectedClasses, setSelectedClasses] = useState<ClaseActivo[]>([]);
-  const [cashExpanded, setCashExpanded] = useState(false);
+  const [selectedBrokers, setSelectedBrokers] = useState<BrokerCode[]>([]);
+  const [segmentByBroker, setSegmentByBroker] = useState(true);
+  const [cashExpandedKeys, setCashExpandedKeys] = useState<Set<string>>(() => new Set());
   const [groupByTicker, setGroupByTicker] = useState(true);
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(() => new Set());
   const [flowPdfSections, setFlowPdfSections] = useState({
@@ -97,6 +101,21 @@ export default function ClienteDetailPage() {
     }, {});
   }, [positions]);
   const selectedClassSet = useMemo(() => new Set(selectedClasses), [selectedClasses]);
+  const brokersInPositions = useMemo<BrokerCode[]>(() => {
+    const present = new Set(positions.map((p) => p.broker));
+    const ordered = BROKER_ORDER.filter((b) => present.has(b));
+    for (const b of present) {
+      if (!ordered.includes(b)) ordered.push(b);
+    }
+    return ordered;
+  }, [positions]);
+  const selectedBrokerSet = useMemo(() => {
+    const active = selectedBrokers.length > 0 ? selectedBrokers : brokersInPositions;
+    return new Set(active);
+  }, [selectedBrokers, brokersInPositions]);
+  const allBrokersSelected =
+    brokersInPositions.length > 0 &&
+    (selectedBrokers.length === 0 || selectedBrokers.length === brokersInPositions.length);
 
   useEffect(() => {
     setSelectedClasses((prev) => {
@@ -106,6 +125,15 @@ export default function ClienteDetailPage() {
       return next.length > 0 ? next : classesInPositions;
     });
   }, [classesInPositions]);
+
+  useEffect(() => {
+    setSelectedBrokers((prev) => {
+      if (brokersInPositions.length === 0) return [];
+      if (prev.length === 0) return brokersInPositions;
+      const next = prev.filter((b) => brokersInPositions.includes(b));
+      return next.length > 0 ? next : brokersInPositions;
+    });
+  }, [brokersInPositions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -321,17 +349,21 @@ export default function ClienteDetailPage() {
   }, [mappedBondFlows]);
 
   const sortedCashPositions = useMemo(() => {
-    const list = positions.filter((p) => isCashLike(p) && selectedClassSet.has(p.clase_activo));
+    const list = positions.filter(
+      (p) => isCashLike(p) && selectedClassSet.has(p.clase_activo) && selectedBrokerSet.has(p.broker)
+    );
     list.sort((a, b) => {
       const cashCmp = getCashBucketLabel(a).localeCompare(getCashBucketLabel(b));
       if (cashCmp !== 0) return cashCmp;
       return (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0);
     });
     return list;
-  }, [positions, selectedClassSet]);
+  }, [positions, selectedClassSet, selectedBrokerSet]);
 
   const sortedNonCashPositions = useMemo(() => {
-    const list = positions.filter((p) => !isCashLike(p) && selectedClassSet.has(p.clase_activo));
+    const list = positions.filter(
+      (p) => !isCashLike(p) && selectedClassSet.has(p.clase_activo) && selectedBrokerSet.has(p.broker)
+    );
     list.sort((a, b) => {
       let cmp = 0;
       if (sortBy === 'clase') {
@@ -346,38 +378,55 @@ export default function ClienteDetailPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [positions, selectedClassSet, sortBy, sortDir, totalUsd]);
+  }, [positions, selectedClassSet, selectedBrokerSet, sortBy, sortDir, totalUsd]);
 
-  const nonCashGroups = useMemo(() => {
-    const map = new Map<string, Position[]>();
-    for (const p of sortedNonCashPositions) {
-      const k = instrumentKey(p);
-      const list = map.get(k);
-      if (list) list.push(p);
-      else map.set(k, [p]);
-    }
-    const groups = [...map.entries()].map(([key, list]) => {
-      const items = [...list].sort((a, b) => (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0));
-      const usd = items.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
-      return { key, items, usd, clase: items[0]!.clase_activo };
-    });
-    groups.sort((a, b) => {
-      let cmp = 0;
-      if (sortBy === 'clase') {
-        cmp = a.clase.localeCompare(b.clase);
-        if (cmp === 0) cmp = a.usd - b.usd;
-      } else {
-        cmp = a.usd - b.usd;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return groups;
-  }, [sortedNonCashPositions, sortBy, sortDir]);
-
-  const repeatedGroupKeys = useMemo(
-    () => nonCashGroups.filter((g) => g.items.length > 1).map((g) => g.key),
-    [nonCashGroups]
+  const nonCashGroups = useMemo(
+    () => buildNonCashGroups(sortedNonCashPositions, sortBy, sortDir),
+    [sortedNonCashPositions, sortBy, sortDir]
   );
+
+  const brokerSegments = useMemo(() => {
+    return brokersInPositions
+      .filter((broker) => selectedBrokerSet.has(broker))
+      .map((broker) => {
+        const cash = sortedCashPositions.filter((p) => p.broker === broker);
+        const nonCash = sortedNonCashPositions.filter((p) => p.broker === broker);
+        const rows = [...cash, ...nonCash];
+        const usd = rows.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+        const ars = rows.reduce((s, p) => s + getArsValuationNumber(p), 0);
+        return {
+          broker,
+          cash,
+          nonCash,
+          groups: buildNonCashGroups(nonCash, sortBy, sortDir),
+          usd,
+          ars,
+          allOffshore: rows.every((p) => isOffshore(p.broker)),
+          count: rows.length,
+        };
+      })
+      .filter((segment) => segment.count > 0);
+  }, [brokersInPositions, selectedBrokerSet, sortedCashPositions, sortedNonCashPositions, sortBy, sortDir]);
+
+  const showBrokerSegments = segmentByBroker && brokerSegments.length > 1;
+
+  const repeatedGroupKeys = useMemo(() => {
+    if (showBrokerSegments) {
+      return brokerSegments.flatMap((segment) =>
+        segment.groups.filter((g) => g.items.length > 1).map((g) => `${segment.broker}|${g.key}`)
+      );
+    }
+    return nonCashGroups.filter((g) => g.items.length > 1).map((g) => g.key);
+  }, [showBrokerSegments, brokerSegments, nonCashGroups]);
+
+  const toggleCash = (key: string) => {
+    setCashExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const toggleTickerExpanded = (key: string) => {
     setExpandedTickers((prev) => {
@@ -520,7 +569,28 @@ export default function ClienteDetailPage() {
 
       {/* Breakdowns */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <BreakdownCard title="Por Broker" data={byBroker} total={totalUsd} />
+        <BreakdownCard
+          title="Por Broker"
+          data={byBroker}
+          total={totalUsd}
+          activeKeys={
+            brokersInPositions.length > 1 &&
+            selectedBrokers.length > 0 &&
+            selectedBrokers.length < brokersInPositions.length
+              ? selectedBrokerSet
+              : undefined
+          }
+          onPick={
+            brokersInPositions.length > 1
+              ? (key) => {
+                  const broker = key as BrokerCode;
+                  setSelectedBrokers((prev) =>
+                    prev.length === 1 && prev[0] === broker ? brokersInPositions : [broker]
+                  );
+                }
+              : undefined
+          }
+        />
         <BreakdownCard title="Por Clase de Activo" data={byClase} total={totalUsd} />
         <BreakdownCard title="Por Moneda" data={byMoneda} total={totalUsd} />
         <BreakdownCard title="Local vs Offshore" data={byTipo} total={totalUsd} />
@@ -564,6 +634,43 @@ export default function ClienteDetailPage() {
                 <option value="asc">Ascendente</option>
               </select>
             </div>
+            {brokersInPositions.length > 1 && (
+              <div>
+                <label className="text-xs text-muted-foreground">Brokers</label>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={allBrokersSelected ? 'default' : 'outline'}
+                    className={
+                      allBrokersSelected ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined
+                    }
+                    onClick={() => setSelectedBrokers(brokersInPositions)}
+                  >
+                    Todos
+                  </Button>
+                  {brokersInPositions.map((broker) => {
+                    const active = selectedBrokerSet.has(broker);
+                    return (
+                      <Button
+                        key={broker}
+                        type="button"
+                        size="sm"
+                        variant={active ? 'default' : 'outline'}
+                        className={active ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined}
+                        onClick={() =>
+                          setSelectedBrokers((prev) =>
+                            prev.includes(broker) ? prev.filter((b) => b !== broker) : [...prev, broker]
+                          )
+                        }
+                      >
+                        {broker} ({formatCompact(byBroker[broker] ?? 0)})
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground">Clases visibles</label>
               <div className="mt-1 flex flex-wrap gap-2">
@@ -604,6 +711,17 @@ export default function ClienteDetailPage() {
             <div>
               <label className="text-xs text-muted-foreground">Vista</label>
               <div className="mt-1 flex flex-wrap items-center gap-2">
+                {brokersInPositions.length > 1 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={segmentByBroker ? 'default' : 'outline'}
+                    className={segmentByBroker ? 'bg-slate-900 text-white hover:bg-slate-800' : undefined}
+                    onClick={() => setSegmentByBroker((v) => !v)}
+                  >
+                    Segmentar por broker
+                  </Button>
+                )}
                 <Button
                   type="button"
                   size="sm"
@@ -627,7 +745,8 @@ export default function ClienteDetailPage() {
                       Colapsar
                     </Button>
                     <span className="text-xs text-muted-foreground">
-                      {repeatedGroupKeys.length} ticker{repeatedGroupKeys.length > 1 ? 's' : ''} en más de una cuenta/broker
+                      {repeatedGroupKeys.length} ticker{repeatedGroupKeys.length > 1 ? 's' : ''}{' '}
+                      {showBrokerSegments ? 'en más de una cuenta, dentro de un broker' : 'en más de una cuenta/broker'}
                     </span>
                   </>
                 )}
@@ -658,114 +777,47 @@ export default function ClienteDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {cashTotals.count > 0 && (
-                  <tr className="border-b border-border/70 bg-muted/20">
-                    <td className="p-2">
-                      <Badge variant="outline" className="font-semibold">CASH</Badge>
-                    </td>
-                    <td className="p-2 text-xs text-muted-foreground">—</td>
-                    <td className="p-2">
-                      <button
-                        type="button"
-                        className="font-mono text-sm text-primary hover:underline"
-                        onClick={() => setCashExpanded((v) => !v)}
-                      >
-                        {cashExpanded ? '▼' : '▶'} CASH agregado ({cashTotals.count} posiciones)
-                      </button>
-                    </td>
-                    <td className="p-2">
-                      <Badge variant="secondary" className="text-xs">cash</Badge>
-                    </td>
-                    <td className="p-2 text-right font-mono">—</td>
-                    <td className="p-2 text-right font-mono">—</td>
-                    <td className="p-2 text-right font-mono">—</td>
-                    <td className="p-2 text-right font-mono font-medium">{formatCurrency(cashTotals.usd)}</td>
-                    <td className="p-2 text-right font-mono">
-                      {cashTotals.ars.toLocaleString('es-AR', {
-                        style: 'currency',
-                        currency: 'ARS',
-                        minimumFractionDigits: 0,
-                        maximumFractionDigits: 2,
-                      })}
-                    </td>
-                    <td className="p-2 text-xs text-muted-foreground">—</td>
-                    <td className="p-2 text-right text-muted-foreground">
-                      {selectionTotalUsd > 0 ? formatPct((cashTotals.usd / selectionTotalUsd) * 100) : '—'}
-                    </td>
-                    <td className="p-2 text-xs">Mixto</td>
-                    <td className="p-2">—</td>
-                    <td className="p-2 text-right font-mono">—</td>
-                    <td className="p-2 text-right font-mono">—</td>
-                  </tr>
-                )}
-                {cashExpanded && sortedCashPositions.map((p) => (
-                  <tr key={`cash-${p.source_row}`} className="border-b border-border/40 bg-muted/10 hover:bg-muted/40">
-                    <td className="p-2"><Badge variant="outline" className={brokerColorClass(p.broker)}>{p.broker}</Badge></td>
-                    <td className="p-2 text-xs font-mono text-muted-foreground">{p.cuenta}</td>
-                    <td className="p-2 font-mono">
-                      CASH · <span className="text-xs text-muted-foreground">{getCashBucketLabel(p)}</span>
-                    </td>
-                    <td className="p-2"><Badge variant="secondary" className="text-xs">{p.clase_activo}</Badge></td>
-                    <td className="p-2 text-right font-mono">{p.cantidad.toLocaleString()}</td>
-                    <td className="p-2 text-right font-mono">{formatArsPrice(p)}</td>
-                    <td className="p-2 text-right font-mono">{formatUsdPrice(p)}</td>
-                    <td className="p-2 text-right font-mono font-medium">{formatCurrency(p.valor_mercado_usd ?? 0)}</td>
-                    <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
-                    <td className="p-2 text-xs text-muted-foreground">{p.forma_legal ?? '—'}</td>
-                    <td className="p-2 text-right text-muted-foreground">
-                      {selectionTotalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / selectionTotalUsd) * 100) : '—'}
-                    </td>
-                    <td className="p-2 text-xs">{p.moneda}{p.moneda_subtipo ? ` (${p.moneda_subtipo})` : ''}</td>
-                    <td className="p-2">{p.warnings.length > 0 && <span className="text-amber-500" title={p.warnings.join('\n')}>⚠ {p.warnings.length}</span>}</td>
-                    <td className="p-2 text-right font-mono">—</td>
-                    <td className="p-2 text-right font-mono">—</td>
-                  </tr>
-                ))}
-                {!groupByTicker &&
-                  sortedNonCashPositions.map((p) => (
-                    <PositionRow
-                      key={`${p.source_file}-${p.source_row}`}
-                      p={p}
-                      totalUsd={selectionTotalUsd}
-                      metrics={bondMetricsByRow.get(p)}
-                    />
-                  ))}
-                {groupByTicker &&
-                  nonCashGroups.map((g) => {
-                    if (g.items.length === 1) {
-                      const p = g.items[0]!;
-                      return (
-                        <PositionRow
-                          key={g.key}
-                          p={p}
+                {showBrokerSegments
+                  ? brokerSegments.map((segment) => (
+                      <Fragment key={segment.broker}>
+                        <BrokerSegmentHeader
+                          broker={segment.broker}
+                          count={segment.count}
+                          usd={segment.usd}
+                          ars={segment.ars}
+                          allOffshore={segment.allOffshore}
                           totalUsd={selectionTotalUsd}
-                          metrics={bondMetricsByRow.get(p)}
                         />
-                      );
-                    }
-                    const expanded = expandedTickers.has(g.key);
-                    return (
-                      <Fragment key={g.key}>
-                        <GroupedTickerRow
-                          items={g.items}
-                          totalUsd={selectionTotalUsd}
+                        <PositionsBlock
+                          cash={segment.cash}
+                          nonCash={segment.nonCash}
+                          groups={segment.groups}
+                          groupByTicker={groupByTicker}
+                          cashExpanded={cashExpandedKeys.has(segment.broker)}
+                          onToggleCash={() => toggleCash(segment.broker)}
+                          expandedTickers={expandedTickers}
+                          onToggleTicker={toggleTickerExpanded}
+                          keyPrefix={segment.broker}
+                          selectionTotalUsd={selectionTotalUsd}
                           bondMetricsByRow={bondMetricsByRow}
-                          expanded={expanded}
-                          onToggle={() => toggleTickerExpanded(g.key)}
                         />
-                        {expanded &&
-                          g.items.map((p) => (
-                            <PositionRow
-                              key={`${g.key}-${p.source_file}-${p.source_row}`}
-                              p={p}
-                              totalUsd={selectionTotalUsd}
-                              metrics={bondMetricsByRow.get(p)}
-                              nested
-                            />
-                          ))}
                       </Fragment>
-                    );
-                  })}
+                    ))
+                  : (
+                      <PositionsBlock
+                        cash={sortedCashPositions}
+                        nonCash={sortedNonCashPositions}
+                        groups={nonCashGroups}
+                        groupByTicker={groupByTicker}
+                        cashExpanded={cashExpandedKeys.has('all')}
+                        onToggleCash={() => toggleCash('all')}
+                        expandedTickers={expandedTickers}
+                        onToggleTicker={toggleTickerExpanded}
+                        keyPrefix=""
+                        selectionTotalUsd={selectionTotalUsd}
+                        bondMetricsByRow={bondMetricsByRow}
+                      />
+                    )}
               </tbody>
             </table>
           </div>
@@ -1125,25 +1177,285 @@ function GroupedTickerRow({
   );
 }
 
-function BreakdownCard({ title, data, total }: { title: string; data: Record<string, number>; total: number }) {
+type NonCashGroup = {
+  key: string;
+  items: Position[];
+  usd: number;
+  clase: ClaseActivo;
+};
+
+function buildNonCashGroups(
+  list: Position[],
+  sortBy: 'valor_usd' | 'pct_portfolio' | 'clase',
+  sortDir: 'asc' | 'desc',
+): NonCashGroup[] {
+  const map = new Map<string, Position[]>();
+  for (const p of list) {
+    const k = instrumentKey(p);
+    const items = map.get(k);
+    if (items) items.push(p);
+    else map.set(k, [p]);
+  }
+  const groups = [...map.entries()].map(([key, raw]) => {
+    const items = [...raw].sort((a, b) => (b.valor_mercado_usd ?? 0) - (a.valor_mercado_usd ?? 0));
+    const usd = items.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+    return { key, items, usd, clase: items[0]!.clase_activo };
+  });
+  groups.sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === 'clase') {
+      cmp = a.clase.localeCompare(b.clase);
+      if (cmp === 0) cmp = a.usd - b.usd;
+    } else {
+      cmp = a.usd - b.usd;
+    }
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+  return groups;
+}
+
+function BrokerSegmentHeader({
+  broker,
+  count,
+  usd,
+  ars,
+  allOffshore,
+  totalUsd,
+}: {
+  broker: string;
+  count: number;
+  usd: number;
+  ars: number;
+  allOffshore: boolean;
+  totalUsd: number;
+}) {
+  return (
+    <tr className="border-b border-border bg-muted/60">
+      <td className="p-2" colSpan={7}>
+        <Badge variant="outline" className={brokerColorClass(broker)}>{broker}</Badge>
+        <span className="ml-2 text-xs text-muted-foreground">
+          {count} posici{count === 1 ? 'ón' : 'ones'}
+        </span>
+      </td>
+      <td className="p-2 text-right font-mono font-medium">{formatCurrency(usd)}</td>
+      <td className="p-2 text-right font-mono">
+        {allOffshore
+          ? '—'
+          : ars.toLocaleString('es-AR', {
+              style: 'currency',
+              currency: 'ARS',
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2,
+            })}
+      </td>
+      <td className="p-2" />
+      <td className="p-2 text-right text-muted-foreground">
+        {totalUsd > 0 ? formatPct((usd / totalUsd) * 100) : '—'}
+      </td>
+      <td className="p-2" colSpan={4} />
+    </tr>
+  );
+}
+
+function PositionsBlock({
+  cash,
+  nonCash,
+  groups,
+  groupByTicker,
+  cashExpanded,
+  onToggleCash,
+  expandedTickers,
+  onToggleTicker,
+  keyPrefix,
+  selectionTotalUsd,
+  bondMetricsByRow,
+}: {
+  cash: Position[];
+  nonCash: Position[];
+  groups: NonCashGroup[];
+  groupByTicker: boolean;
+  cashExpanded: boolean;
+  onToggleCash: () => void;
+  expandedTickers: Set<string>;
+  onToggleTicker: (key: string) => void;
+  keyPrefix: string;
+  selectionTotalUsd: number;
+  bondMetricsByRow: Map<Position, BondYieldMetrics>;
+}) {
+  const cashUsd = cash.reduce((s, p) => s + (p.valor_mercado_usd ?? 0), 0);
+  const cashArs = cash.reduce((s, p) => s + getArsValuationNumber(p), 0);
+  const cashAllOffshore = cash.length > 0 && cash.every((p) => isOffshore(p.broker));
+  const prefix = (key: string) => (keyPrefix ? `${keyPrefix}|${key}` : key);
+
+  return (
+    <>
+      {cash.length > 0 && (
+        <tr className="border-b border-border/70 bg-muted/20">
+          <td className="p-2">
+            <Badge variant="outline" className="font-semibold">CASH</Badge>
+          </td>
+          <td className="p-2 text-xs text-muted-foreground">—</td>
+          <td className="p-2">
+            <button
+              type="button"
+              className="font-mono text-sm text-primary hover:underline"
+              onClick={onToggleCash}
+            >
+              {cashExpanded ? '▼' : '▶'} CASH agregado ({cash.length} posiciones)
+            </button>
+          </td>
+          <td className="p-2">
+            <Badge variant="secondary" className="text-xs">cash</Badge>
+          </td>
+          <td className="p-2 text-right font-mono">—</td>
+          <td className="p-2 text-right font-mono">—</td>
+          <td className="p-2 text-right font-mono">—</td>
+          <td className="p-2 text-right font-mono font-medium">{formatCurrency(cashUsd)}</td>
+          <td className="p-2 text-right font-mono">
+            {cashAllOffshore
+              ? '—'
+              : cashArs.toLocaleString('es-AR', {
+                  style: 'currency',
+                  currency: 'ARS',
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 2,
+                })}
+          </td>
+          <td className="p-2 text-xs text-muted-foreground">—</td>
+          <td className="p-2 text-right text-muted-foreground">
+            {selectionTotalUsd > 0 ? formatPct((cashUsd / selectionTotalUsd) * 100) : '—'}
+          </td>
+          <td className="p-2 text-xs">Mixto</td>
+          <td className="p-2">—</td>
+          <td className="p-2 text-right font-mono">—</td>
+          <td className="p-2 text-right font-mono">—</td>
+        </tr>
+      )}
+      {cashExpanded &&
+        cash.map((p) => (
+          <tr key={prefix(`cash-${p.source_file}-${p.source_row}`)} className="border-b border-border/40 bg-muted/10 hover:bg-muted/40">
+            <td className="p-2"><Badge variant="outline" className={brokerColorClass(p.broker)}>{p.broker}</Badge></td>
+            <td className="p-2 text-xs font-mono text-muted-foreground">{p.cuenta}</td>
+            <td className="p-2 font-mono">
+              CASH · <span className="text-xs text-muted-foreground">{getCashBucketLabel(p)}</span>
+            </td>
+            <td className="p-2"><Badge variant="secondary" className="text-xs">{p.clase_activo}</Badge></td>
+            <td className="p-2 text-right font-mono">{p.cantidad.toLocaleString()}</td>
+            <td className="p-2 text-right font-mono">{formatArsPrice(p)}</td>
+            <td className="p-2 text-right font-mono">{formatUsdPrice(p)}</td>
+            <td className="p-2 text-right font-mono font-medium">{formatCurrency(p.valor_mercado_usd ?? 0)}</td>
+            <td className="p-2 text-right font-mono">{formatArsValuation(p)}</td>
+            <td className="p-2 text-xs text-muted-foreground">{p.forma_legal ?? '—'}</td>
+            <td className="p-2 text-right text-muted-foreground">
+              {selectionTotalUsd > 0 ? formatPct(((p.valor_mercado_usd ?? 0) / selectionTotalUsd) * 100) : '—'}
+            </td>
+            <td className="p-2 text-xs">{p.moneda}{p.moneda_subtipo ? ` (${p.moneda_subtipo})` : ''}</td>
+            <td className="p-2">{p.warnings.length > 0 && <span className="text-amber-500" title={p.warnings.join('\n')}>⚠ {p.warnings.length}</span>}</td>
+            <td className="p-2 text-right font-mono">—</td>
+            <td className="p-2 text-right font-mono">—</td>
+          </tr>
+        ))}
+      {!groupByTicker &&
+        nonCash.map((p) => (
+          <PositionRow
+            key={prefix(`${p.source_file}-${p.source_row}`)}
+            p={p}
+            totalUsd={selectionTotalUsd}
+            metrics={bondMetricsByRow.get(p)}
+          />
+        ))}
+      {groupByTicker &&
+        groups.map((g) => {
+          if (g.items.length === 1) {
+            const p = g.items[0]!;
+            return (
+              <PositionRow
+                key={prefix(g.key)}
+                p={p}
+                totalUsd={selectionTotalUsd}
+                metrics={bondMetricsByRow.get(p)}
+              />
+            );
+          }
+          const expandKey = prefix(g.key);
+          const expanded = expandedTickers.has(expandKey);
+          return (
+            <Fragment key={expandKey}>
+              <GroupedTickerRow
+                items={g.items}
+                totalUsd={selectionTotalUsd}
+                bondMetricsByRow={bondMetricsByRow}
+                expanded={expanded}
+                onToggle={() => onToggleTicker(expandKey)}
+              />
+              {expanded &&
+                g.items.map((p) => (
+                  <PositionRow
+                    key={prefix(`${g.key}-${p.source_file}-${p.source_row}`)}
+                    p={p}
+                    totalUsd={selectionTotalUsd}
+                    metrics={bondMetricsByRow.get(p)}
+                    nested
+                  />
+                ))}
+            </Fragment>
+          );
+        })}
+    </>
+  );
+}
+
+function BreakdownCard({
+  title,
+  data,
+  total,
+  onPick,
+  activeKeys,
+}: {
+  title: string;
+  data: Record<string, number>;
+  total: number;
+  onPick?: (key: string) => void;
+  activeKeys?: Set<string>;
+}) {
   const sorted = Object.entries(data).sort(([, a], [, b]) => b - a);
   return (
     <Card>
-      <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">{title}</CardTitle></CardHeader>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        {onPick && (
+          <p className="text-xs text-muted-foreground">Clic en un broker para ver solo esas posiciones.</p>
+        )}
+      </CardHeader>
       <CardContent>
         <div className="space-y-2">
           {sorted.map(([key, value]) => {
             const pct = total > 0 ? (value / total) * 100 : 0;
-            return (
-              <div key={key}>
+            const dimmed = activeKeys != null && !activeKeys.has(key);
+            const body = (
+              <>
                 <div className="flex justify-between text-sm">
-                  <span>{key}</span>
+                  <span className={activeKeys?.has(key) ? 'font-medium' : undefined}>{key}</span>
                   <span className="font-mono">{formatCompact(value)} <span className="text-muted-foreground">({pct.toFixed(1)}%)</span></span>
                 </div>
                 <div className="progress-track">
                   <div className="progress-fill bg-primary" style={{ width: `${Math.min(pct, 100)}%` }} />
                 </div>
-              </div>
+              </>
+            );
+            if (!onPick) {
+              return <div key={key}>{body}</div>;
+            }
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`block w-full text-left ${dimmed ? 'opacity-40' : ''}`}
+                title="Ver solo este broker"
+                onClick={() => onPick(key)}
+              >
+                {body}
+              </button>
             );
           })}
         </div>
